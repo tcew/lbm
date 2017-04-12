@@ -3,16 +3,18 @@ HDRDIR  = ./
 
 # set options for this machine
 # specify which compilers to use for c and linking
-CC	= gcc-mp-6
-LD	= gcc-mp-6
+CC	= gcc
+LD	= gcc
 NCC	= nvcc
 NLD	= nvcc
 
 # compiler flags to be used (set to compile with debugging on)
-CFLAGS = -I$(HDRDIR) -O3
+CFLAGS = -I$(HDRDIR)  -fopenmp -O3
+NCFLAGS = -I$(HDRDIR)   -O3 --use_fast_math --fmad=true
+#-arch=sm_50 --fmad=true
 
 # link flags to be used 
-LDFLAGS	= 
+LDFLAGS	=  -fopenmp
 NLDFLAGS =
 
 # libraries to be linked in
@@ -25,7 +27,7 @@ LIBS	=  -lpng -lm
 .c.o:
 	$(CC) $(CFLAGS) -o $*.o -c $*.c
 .cu.o:
-	$(NCC) -o $*.o -c $*.cu
+	$(NCC) $(NCFLAGS) -o $*.o -c $*.cu 
 
 # list of objects to be compiled
 SOBJS    = serialLBM.o png_util.o
