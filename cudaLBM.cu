@@ -35,7 +35,7 @@ void lbmInput(const char *imageFileName,
   read_png(imageFileName, &N, &M, rgb, alpha);
 
   // pad to guarantee space around obstacle and extend the wake
-  int Npad = 4*N;
+  int Npad = 3*N;
   int Mpad = 2*M;
   
   // threshold walls based on gray scale
@@ -51,10 +51,14 @@ void lbmInput(const char *imageFileName,
       dfloat r = (*rgb)[3*offset+0];
       dfloat g = (*rgb)[3*offset+1];
       dfloat b = (*rgb)[3*offset+2];
-
+      dfloat a = (*alpha)[offset];
       // center image in padded region (including halo zone)
       int id = idx(Npad,n+(N/4),m+(M/2));
-      (*nodeType)[id] = WALL*(sqrt(r*r+g*g+b*b)<threshold);
+
+      if(a==0)
+	(*nodeType)[id] = FLUID;
+      else
+	(*nodeType)[id] = WALL*(sqrt(r*r+g*g+b*b)<threshold);
 
       wallCount += (*nodeType)[id];
       rgbPad[3*id+0] = r;
@@ -92,7 +96,7 @@ void lbmOutput(const char *fname,
   int n,m,s;
   FILE *bah = fopen(fname, "w");
 
-  dfloat plotMin = .95, plotMax = 1.05;
+  dfloat plotMin = .975, plotMax = 1.025;
   for(m=0;m<=M+1;++m){
     for(n=0;n<=N+1;++n){
       int id = idx(N,n,m);
@@ -106,11 +110,17 @@ void lbmOutput(const char *fname,
 	for(s=0;s<NSPECIES;++s)
 	  rho += f[id+s*(N+2)*(M+2)];
 	rho = ((rho-plotMin)/(plotMax-plotMin)); // rescale
+#if 0
 	r = 0;
 	g = 255*(1.-rho);
 	b = 255*rho;
 	a = 255;
-
+#else
+	r = 255*rho;
+	g = 255*rho;
+	b = 255*rho;
+	a = 255;
+#endif
 	rgb[idx(N,n,m)*3+0] = r;
 	rgb[idx(N,n,m)*3+1] = g;
 	rgb[idx(N,n,m)*3+2] = b;
@@ -167,7 +177,7 @@ __host__ __device__ void lbmEquilibrium(const dfloat c,
 __global__ void lbmUpdate(const int N,                  // number of nodes in x
 			  const int M,                  // number of nodes in y
 			  const dfloat c,                // speed of sound
-			  const dfloat tau,              // relaxation rate
+			  const dfloat * __restrict__ tau,           // relaxation rate
 			  const int    * __restrict__ nodeType,      // (N+2) x (M+2) node types 
 			  const dfloat * __restrict__ f,             // (N+2) x (M+2) x 9 fields before streaming and collisions
 			  dfloat * __restrict__ fnew){               // (N+2) x (M+2) x 9 fields after streaming and collisions
@@ -175,14 +185,14 @@ __global__ void lbmUpdate(const int N,                  // number of nodes in x
   // number of nodes in whole array including halo
   int Nall = (N+2)*(M+2);
   
-  // physics paramaters
-  dfloat tauinv = 1.f/tau;
-
   // loop over all non-halo nodes in lattice
   int n = 1 + threadIdx.x + blockIdx.x*TX;
   int m = 1 + threadIdx.y + blockIdx.y*TY;
 
   if(m<M+1 && n<=N+1){
+
+    // physics paramaters
+    dfloat tauinv = 1.f/tau[idx(N,n,m)];
     
     // discover type of node (WALL or FLUID)
     const int nt = nodeType[idx(N,n,m)];
@@ -329,20 +339,17 @@ int main(int argc, char **argv){
     exit(-1);
   }
 
-  int N, M; // size of lattice
-  int n,m;
-
   // read threshold 
   dfloat threshold = atof(argv[2]);
   char *imageFileName = strdup(argv[1]);
 
+  int N, M; // size of lattice
   unsigned char *rgb, *alpha;
   int *nodeType;
   lbmInput(imageFileName, threshold, &N, &M, &rgb, &alpha, &nodeType); 
   
   // physical parameters
-  dfloat dx = .01;    // lattice node spacings in x
-  dfloat dy = .01;
+  dfloat dx = .01;    // lattice node spacings 
   dfloat dt = dx*.1; // time step (also determines Mach number)
   dfloat c  = dx/dt; // speed of sound
   dfloat tau = .525; // relaxation rate
@@ -351,25 +358,39 @@ int main(int argc, char **argv){
   printf("Reynolds number %g\n", Reynolds);
 
   // create lattice storage
-  dfloat *f    = (dfloat*) calloc((N+2)*(M+2)*NSPECIES, sizeof(dfloat));
-  dfloat *fnew = (dfloat*) calloc((N+2)*(M+2)*NSPECIES, sizeof(dfloat));
-
-  // set initial flow densities
-  lbmInitialConditions(c, N, M, nodeType, f);
-  lbmInitialConditions(c, N, M, nodeType, fnew);
+  dfloat *h_f    = (dfloat*) calloc((N+2)*(M+2)*NSPECIES, sizeof(dfloat));
+  dfloat *h_fnew = (dfloat*) calloc((N+2)*(M+2)*NSPECIES, sizeof(dfloat));
+  dfloat *h_tau  = (dfloat*) calloc((N+2)*(M+2), sizeof(dfloat));
   
+  // set initial flow densities
+  lbmInitialConditions(c, N, M, nodeType, h_f);
+  lbmInitialConditions(c, N, M, nodeType, h_fnew);
+
+  // set tau based on n index
+  dfloat xo = .9;
+  int n,m;
+  for(m=0;m<=M+1;++m){
+    for(n=0;n<=N+1;++n){
+      dfloat x = ((double)n)/N;
+      dfloat taunm = tau*(1 + 4*(1+tanh(10*(x-xo))));
+      h_tau[idx(N,n,m)] = taunm;
+    }
+  }
+
   // DEVICE storage
-  dfloat *c_f, *c_fnew;
+  dfloat *c_f, *c_fnew, *c_tau;
   int *c_nodeType;
   
-  cudaMalloc(&c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat));
+  cudaMalloc(&c_f,    (N+2)*(M+2)*NSPECIES*sizeof(dfloat));
   cudaMalloc(&c_fnew, (N+2)*(M+2)*NSPECIES*sizeof(dfloat));
   cudaMalloc(&c_nodeType, (N+2)*(M+2)*sizeof(int));
+  cudaMalloc(&c_tau,      (N+2)*(M+2)*sizeof(dfloat));
 
-  cudaMemcpy(c_f, f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyHostToDevice);
-  cudaMemcpy(c_fnew, fnew, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyHostToDevice);
+  cudaMemcpy(c_f,    h_f,    (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyHostToDevice);
+  cudaMemcpy(c_fnew, h_fnew, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyHostToDevice);
   cudaMemcpy(c_nodeType, nodeType, (N+2)*(M+2)*sizeof(int), cudaMemcpyHostToDevice);
-    
+  cudaMemcpy(c_tau,  h_tau, (N+2)*(M+2)*sizeof(dfloat), cudaMemcpyHostToDevice);
+  
   int Nsteps = 60000/2, tstep = 0, iostep = 100;
 
   // time step
@@ -379,22 +400,22 @@ int main(int argc, char **argv){
     dim3 T(TX,TY,1);
     dim3 B( (N+1+TX-1)/TX, (M+1+TY-1)/TY, 1);
     
-    lbmUpdate <<< B, T >>> (N, M, c, tau, c_nodeType, c_f, c_fnew);
-    lbmUpdate <<< B, T >>> (N, M, c, tau, c_nodeType, c_fnew, c_f);
+    lbmUpdate <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_f, c_fnew);
+    lbmUpdate <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_fnew, c_f);
 
     if(!(tstep%iostep)){ // output an image every iostep
       printf("tstep = %d\n", tstep);
       char fname[BUFSIZ];
       sprintf(fname, "bah%06d.png", tstep);
 
-      cudaMemcpy(f, c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyDeviceToHost);
-      lbmOutput(fname, nodeType, rgb, alpha, N, M, f);
+      cudaMemcpy(h_f, c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyDeviceToHost);
+      lbmOutput(fname, nodeType, rgb, alpha, N, M, h_f);
     }
   }
 
   // output final result as image
-  cudaMemcpy(f, c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyDeviceToHost);
-  lbmOutput("bahFinal.png", nodeType, rgb, alpha, N, M, f);
+  cudaMemcpy(h_f, c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyDeviceToHost);
+  lbmOutput("bahFinal.png", nodeType, rgb, alpha, N, M, h_f);
 
   exit(0);
   return 0;
