@@ -3,16 +3,16 @@ HDRDIR  = ./
 
 # set options for this machine
 # specify which compilers to use for c and linking
-CC	= gcc
-LD	= gcc
+CC	= gcc-mp-6
+LD	= gcc-mp-6
 NCC	= nvcc
 NLD	= nvcc
 
 # compiler flags to be used (set to compile with debugging on)
-CFLAGS = -I$(HDRDIR) -O3 -fopenmp
+CFLAGS = -I$(HDRDIR) -O3
 
 # link flags to be used 
-LDFLAGS	= -fopenmp
+LDFLAGS	= 
 NLDFLAGS =
 
 # libraries to be linked in
