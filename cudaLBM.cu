@@ -194,7 +194,7 @@ __host__ __device__ void lbmEquilibrium(const dfloat c,
 }
 
 #define TX 32
-#define TY 32
+#define TY 8
 
 
 // perform lattice streaming and collision steps
@@ -334,7 +334,6 @@ void lbmInitialConditions(dfloat c, int N, int M, int *nodeType, dfloat *f){
       int s;
 
       if(n==0){
-	//      if(nodeType[idx(N,n,m)]==FLUID){
 	for(s=0;s<NSPECIES;++s){
 	  f[idx(N,n,m)+s*(N+2)*(M+2)] = feqIC[s];
 	}
@@ -344,15 +343,7 @@ void lbmInitialConditions(dfloat c, int N, int M, int *nodeType, dfloat *f){
 	  f[idx(N,n,m)+s*(N+2)*(M+2)] = feqWALL[s];
 	}
       }
-#if 0
-      printf("[%g,%g,%g,%g] ",
-	     f[idx(N,n,m)+0*(N+2)*(M+2)],
-	     f[idx(N,n,m)+1*(N+2)*(M+2)],
-	     f[idx(N,n,m)+2*(N+2)*(M+2)],
-	     f[idx(N,n,m)+3*(N+2)*(M+2)]);
-#endif
     }
-    //    printf("\n");
   }
 }
 
