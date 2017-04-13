@@ -430,7 +430,7 @@ int main(int argc, char **argv){
     if(!(tstep%iostep)){ // output an image every iostep
       printf("tstep = %d\n", tstep);
       char fname[BUFSIZ];
-      sprintf(fname, "bah%06d.png", tstep);
+      sprintf(fname, "bah%06d.png", tstep/iostep);
 
       cudaMemcpy(h_f, c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyDeviceToHost);
       lbmOutput(fname, nodeType, rgb, alpha, c, dx, N, M, h_f);
