@@ -51,7 +51,7 @@ void lbmInput(const char *imageFileName,
       dfloat r = (*rgb)[3*offset+0];
       dfloat g = (*rgb)[3*offset+1];
       dfloat b = (*rgb)[3*offset+2];
-      dfloat a = (*alpha)[offset];
+      dfloat a = (*alpha) ? (*alpha)[offset]:255;
       // center image in padded region (including halo zone)
       int id = idx(Npad,n+(N/4),m+(M/2));
 
@@ -90,15 +90,36 @@ void lbmOutput(const char *fname,
 	       const int *nodeType,
 	       unsigned char *rgb,
 	       unsigned char *alpha,
+	       const dfloat c,
+	       const dfloat dx,
 	       int N,
 	       int M,
 	       const dfloat *f){
   int n,m,s;
   FILE *bah = fopen(fname, "w");
 
-  dfloat plotMin = .975, plotMax = 1.025;
-  for(m=0;m<=M+1;++m){
-    for(n=0;n<=N+1;++n){
+  // compute vorticity
+  dfloat *Ux = (dfloat*) calloc((N+2)*(M+2), sizeof(dfloat));
+  dfloat *Uy = (dfloat*) calloc((N+2)*(M+2), sizeof(dfloat));
+
+  dfloat fnm[NSPECIES];
+  for(m=1;m<=M;++m){
+    for(n=1;n<=N;++n){
+      int base = idx(N, n, m);
+      for(s=0;s<NSPECIES;++s)
+	fnm[s] = f[base+s*(N+2)*(M+2)];
+
+      const dfloat rho = fnm[0]+fnm[1]+fnm[2]+fnm[3]+fnm[4]+fnm[5]+fnm[6]+fnm[7]+fnm[8];
+      // macroscopic momentum
+      Ux[base] = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*c/rho;
+      Uy[base] = (fnm[2] - fnm[4] + fnm[5] + fnm[6] - fnm[7] - fnm[8])*c/rho;
+    }
+  }
+
+  
+  dfloat plotMin = -4, plotMax = 4;
+  for(m=1;m<=M;++m){
+    for(n=1;n<=N;++n){
       int id = idx(N,n,m);
 
       // over write pixels in fluid region
@@ -110,17 +131,18 @@ void lbmOutput(const char *fname,
 	for(s=0;s<NSPECIES;++s)
 	  rho += f[id+s*(N+2)*(M+2)];
 	rho = ((rho-plotMin)/(plotMax-plotMin)); // rescale
-#if 0
-	r = 0;
-	g = 255*(1.-rho);
-	b = 255*rho;
+
+	dfloat dUxdy = (Ux[idx(N,n,m+1)]-Ux[idx(N,n,m-1)])/(2.*dx);
+	dfloat dUydx = (Uy[idx(N,n+1,m)]-Uy[idx(N,n-1,m)])/(2.*dx);
+	
+	dfloat curlU = dUydx-dUxdy;
+	curlU = ((curlU-plotMin)/(plotMax-plotMin));
+
+	r = 255*curlU;
+	g = 255*curlU;
+	b = 255*curlU;
 	a = 255;
-#else
-	r = 255*rho;
-	g = 255*rho;
-	b = 255*rho;
-	a = 255;
-#endif
+
 	rgb[idx(N,n,m)*3+0] = r;
 	rgb[idx(N,n,m)*3+1] = g;
 	rgb[idx(N,n,m)*3+2] = b;
@@ -132,6 +154,8 @@ void lbmOutput(const char *fname,
   write_png(bah, N+2, M+2, rgb, alpha);
 
   fclose(bah);
+  free(Ux);
+  free(Uy);
 }
 
 __host__ __device__ void lbmEquilibrium(const dfloat c,
@@ -409,13 +433,13 @@ int main(int argc, char **argv){
       sprintf(fname, "bah%06d.png", tstep);
 
       cudaMemcpy(h_f, c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyDeviceToHost);
-      lbmOutput(fname, nodeType, rgb, alpha, N, M, h_f);
+      lbmOutput(fname, nodeType, rgb, alpha, c, dx, N, M, h_f);
     }
   }
 
   // output final result as image
   cudaMemcpy(h_f, c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyDeviceToHost);
-  lbmOutput("bahFinal.png", nodeType, rgb, alpha, N, M, h_f);
+  lbmOutput("bahFinal.png", nodeType, rgb, alpha, c, dx, N, M, h_f);
 
   exit(0);
   return 0;
