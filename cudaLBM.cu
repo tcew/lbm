@@ -3,16 +3,18 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
+
 extern "C"
 {
 #include "png_util.h"
 }
 
+#define dfloat double
+
 #define FLUID 0
 #define WALL 1
-#define NSPECIES 9
 
-#define dfloat float
+#define NSPECIES 9
 
 #include "cuda.h"
 
@@ -37,7 +39,10 @@ void lbmInput(const char *imageFileName,
   // pad to guarantee space around obstacle and extend the wake
   int Npad = 3*N;
   int Mpad = 2*M;
-  
+
+  if(Npad>8192) Npad = 8192;
+  if(Mpad>8192) Mpad = 8192;
+
   // threshold walls based on gray scale
   *nodeType = (int*) calloc((Npad+2)*(Mpad+2), sizeof(int));
 
@@ -158,10 +163,14 @@ void lbmOutput(const char *fname,
   free(Uy);
 }
 
+// weights used to compute equilibrium distribution (post collision)
+const dfloat w0 = 4.f/9.f, w1 = 1.f/9.f, w2 = 1.f/9.f, w3 =  1.f/9.f;
+const dfloat w4 = 1.f/9.f, w5 = 1.f/36.f, w6 = 1.f/36.f, w7 = 1.f/36.f, w8 = 1.f/36.f;
+
 __host__ __device__ void lbmEquilibrium(const dfloat c,
 					const dfloat rho,
 					const dfloat Ux, 
-					const dfloat Uy, 
+					const dfloat Uy,
 					dfloat *  feq){
 
   // resolve macroscopic velocity into lattice particle velocity directions
@@ -177,10 +186,6 @@ __host__ __device__ void lbmEquilibrium(const dfloat c,
   const dfloat v7 =  (-Ux-Uy)/c;
   const dfloat v8 =  (+Ux-Uy)/c;
   
-  // weights used to compute equilibrium distribution (post collision)
-  const dfloat w0 = 4.f/9.f, w1 = 1.f/9.f, w2 = 1.f/9.f, w3 =  1.f/9.f;
-  const dfloat w4 = 1.f/9.f, w5 = 1.f/36.f, w6 = 1.f/36.f, w7 = 1.f/36.f, w8 = 1.f/36.f;
-
   // compute LBM post-collisional 
   feq[0] = rho*w0*(1.f + 3.f*v0 + 4.5f*v0*v0 - 1.5f*U2/(c*c));
   feq[1] = rho*w1*(1.f + 3.f*v1 + 4.5f*v1*v1 - 1.5f*U2/(c*c));
@@ -195,7 +200,6 @@ __host__ __device__ void lbmEquilibrium(const dfloat c,
 
 #define TX 32
 #define TY 8
-
 
 // perform lattice streaming and collision steps
 __global__ void lbmUpdate(const int N,                  // number of nodes in x
@@ -232,8 +236,7 @@ __global__ void lbmUpdate(const int N,                  // number of nodes in x
       fnm[5] = f[idx(N,n-1,m-1) + 5*Nall]; // NE bound from SW
       fnm[6] = f[idx(N,n,m-1)   + 6*Nall]; // NW bound from SE
       fnm[7] = f[idx(N,n,m+1)   + 7*Nall]; // SW bound from NE
-      fnm[8] = f[idx(N,n-1,m+1) + 8*Nall]; // SE bound from NW
-      
+      fnm[8] = f[idx(N,n-1,m+1) + 8*Nall]; // SE bound from NW      
     }
     else if(nt == FLUID){
       fnm[0] = f[idx(N,n,  m)   + 0*Nall]; // stationary 
@@ -265,24 +268,30 @@ __global__ void lbmUpdate(const int N,                  // number of nodes in x
     //    if(rho<1e-4){ printf("rho(%d,%d)=%g\n", n,m,rho); exit(-1); }
     
     // macroscopic momentum
-    const dfloat delta2 = 1e-5;
+    const dfloat delta2 = 1e-8;
     const dfloat Ux = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*c/sqrt(rho*rho+delta2);
     const dfloat Uy = (fnm[2] - fnm[4] + fnm[5] + fnm[6] - fnm[7] - fnm[8])*c/sqrt(rho*rho+delta2);
     
     // compute equilibrium distribution
     dfloat feq[NSPECIES];
     lbmEquilibrium(c, rho, Ux, Uy, feq);
-    
+
+    // MRT stabilization
+    const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
+    const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
+
+    const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
+        
     // post collision densities
-    fnm[0] -= tauinv*(fnm[0]-feq[0]);
-    fnm[1] -= tauinv*(fnm[1]-feq[1]);
-    fnm[2] -= tauinv*(fnm[2]-feq[2]);
-    fnm[3] -= tauinv*(fnm[3]-feq[3]);
-    fnm[4] -= tauinv*(fnm[4]-feq[4]);
-    fnm[5] -= tauinv*(fnm[5]-feq[5]);
-    fnm[6] -= tauinv*(fnm[6]-feq[6]);
-    fnm[7] -= tauinv*(fnm[7]-feq[7]);
-    fnm[8] -= tauinv*(fnm[8]-feq[8]);
+    fnm[0] -= tauinv*(fnm[0]-feq[0]) + (1.f-tauinv)*w0*g0*R*0.25f;
+    fnm[1] -= tauinv*(fnm[1]-feq[1]) + (1.f-tauinv)*w1*g1*R*0.25f;
+    fnm[2] -= tauinv*(fnm[2]-feq[2]) + (1.f-tauinv)*w2*g2*R*0.25f;
+    fnm[3] -= tauinv*(fnm[3]-feq[3]) + (1.f-tauinv)*w3*g3*R*0.25f;
+    fnm[4] -= tauinv*(fnm[4]-feq[4]) + (1.f-tauinv)*w4*g4*R*0.25f;
+    fnm[5] -= tauinv*(fnm[5]-feq[5]) + (1.f-tauinv)*w5*g5*R*0.25f;
+    fnm[6] -= tauinv*(fnm[6]-feq[6]) + (1.f-tauinv)*w6*g6*R*0.25f;
+    fnm[7] -= tauinv*(fnm[7]-feq[7]) + (1.f-tauinv)*w7*g7*R*0.25f;
+    fnm[8] -= tauinv*(fnm[8]-feq[8]) + (1.f-tauinv)*w8*g8*R*0.25f;
     
     // store new densities
     const int base = idx(N,n,m);
@@ -367,7 +376,7 @@ int main(int argc, char **argv){
   dfloat dx = .01;    // lattice node spacings 
   dfloat dt = dx*.1; // time step (also determines Mach number)
   dfloat c  = dx/dt; // speed of sound
-  dfloat tau = .525; // relaxation rate
+  dfloat tau = .61; // relaxation rate
   dfloat Reynolds = 2./((tau-.5)*c*c*dt/3.);
 
   printf("Reynolds number %g\n", Reynolds);
@@ -382,12 +391,12 @@ int main(int argc, char **argv){
   lbmInitialConditions(c, N, M, nodeType, h_fnew);
 
   // set tau based on n index
-  dfloat xo = .9;
+  dfloat xo = .95;
   int n,m;
   for(m=0;m<=M+1;++m){
     for(n=0;n<=N+1;++n){
       dfloat x = ((double)n)/N;
-      dfloat taunm = tau*(1 + 4*(1+tanh(10*(x-xo))));
+      dfloat taunm = tau*(1 + 4*(1+tanh(20*(x-xo))));
       h_tau[idx(N,n,m)] = taunm;
     }
   }
@@ -406,7 +415,7 @@ int main(int argc, char **argv){
   cudaMemcpy(c_nodeType, nodeType, (N+2)*(M+2)*sizeof(int), cudaMemcpyHostToDevice);
   cudaMemcpy(c_tau,  h_tau, (N+2)*(M+2)*sizeof(dfloat), cudaMemcpyHostToDevice);
   
-  int Nsteps = 60000/2, tstep = 0, iostep = 100;
+  int Nsteps = 480000/2, tstep = 0, iostep = 100;
 
   // time step
   for(tstep=0;tstep<Nsteps;++tstep){
@@ -425,6 +434,8 @@ int main(int argc, char **argv){
 
       cudaMemcpy(h_f, c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyDeviceToHost);
       lbmOutput(fname, nodeType, rgb, alpha, c, dx, N, M, h_f);
+
+      lbmCheck(N,M,h_f);
     }
   }
 

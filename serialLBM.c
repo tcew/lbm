@@ -35,6 +35,9 @@ void lbmInput(const char *imageFileName,
   int Npad = 3*N;
   int Mpad = 2*M;
   
+  if(Npad>8192) Npad = 8192;
+  if(Mpad>8192) Mpad = 8192;
+
   // threshold walls based on gray scale
   *nodeType = (int*) calloc((Npad+2)*(Mpad+2), sizeof(int));
 
@@ -155,6 +158,10 @@ void lbmOutput(const char *fname,
   free(Uy);
 }
 
+// weights used to compute equilibrium distribution (post collision)
+const dfloat w0 = 4.f/9.f, w1 = 1.f/9.f, w2 = 1.f/9.f, w3 =  1.f/9.f;
+const dfloat w4 = 1.f/9.f, w5 = 1.f/36.f, w6 = 1.f/36.f, w7 = 1.f/36.f, w8 = 1.f/36.f;
+
 void lbmEquilibrium(const dfloat c,
 		    const dfloat rho,
 		    const dfloat Ux, 
@@ -174,10 +181,6 @@ void lbmEquilibrium(const dfloat c,
   const dfloat v7 =  (-Ux-Uy)/c;
   const dfloat v8 =  (+Ux-Uy)/c;
   
-  // weights used to compute equilibrium distribution (post collision)
-  const dfloat w0 = 4.f/9.f, w1 = 1.f/9.f, w2 = 1.f/9.f, w3 =  1.f/9.f;
-  const dfloat w4 = 1.f/9.f, w5 = 1.f/36.f, w6 = 1.f/36.f, w7 = 1.f/36.f, w8 = 1.f/36.f;
-
   // compute LBM post-collisional 
   feq[0] = rho*w0*(1.f + 3.f*v0 + 4.5f*v0*v0 - 1.5f*U2/(c*c));
   feq[1] = rho*w1*(1.f + 3.f*v1 + 4.5f*v1*v1 - 1.5f*U2/(c*c));
@@ -208,7 +211,7 @@ void lbmUpdate(const int N,                  // number of nodes in x
   int Nall = (N+2)*(M+2);
   
   // loop over all non-halo nodes in lattice
-#pragma omp parallel for private(n)
+
   for(m=1;m<M+1;++m){
     for(n=1;n<=N+1;++n){
 
@@ -230,7 +233,6 @@ void lbmUpdate(const int N,                  // number of nodes in x
 	fnm[6] = f[idx(N,n,m-1)   + 6*Nall]; // NW bound from SE
 	fnm[7] = f[idx(N,n,m+1)   + 7*Nall]; // SW bound from NE
 	fnm[8] = f[idx(N,n-1,m+1) + 8*Nall]; // SE bound from NW
-
       }
       else if(nt == FLUID){
 	fnm[0] = f[idx(N,n,  m)   + 0*Nall]; // stationary 
@@ -269,18 +271,25 @@ void lbmUpdate(const int N,                  // number of nodes in x
       // compute equilibrium distribution
       dfloat feq[NSPECIES];
       lbmEquilibrium(c, rho, Ux, Uy, feq);
-      
-      // post collision densities
-      fnm[0] -= tauinv*(fnm[0]-feq[0]);
-      fnm[1] -= tauinv*(fnm[1]-feq[1]);
-      fnm[2] -= tauinv*(fnm[2]-feq[2]);
-      fnm[3] -= tauinv*(fnm[3]-feq[3]);
-      fnm[4] -= tauinv*(fnm[4]-feq[4]);
-      fnm[5] -= tauinv*(fnm[5]-feq[5]);
-      fnm[6] -= tauinv*(fnm[6]-feq[6]);
-      fnm[7] -= tauinv*(fnm[7]-feq[7]);
-      fnm[8] -= tauinv*(fnm[8]-feq[8]);
 
+
+      // MRT stabilization
+      const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
+      const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
+      
+      const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
+    
+      // relax towards post collision densities
+      fnm[0] -= tauinv*(fnm[0]-feq[0]) + (1.f-tauinv)*w0*g0*R*0.25f;
+      fnm[1] -= tauinv*(fnm[1]-feq[1]) + (1.f-tauinv)*w1*g1*R*0.25f;
+      fnm[2] -= tauinv*(fnm[2]-feq[2]) + (1.f-tauinv)*w2*g2*R*0.25f;
+      fnm[3] -= tauinv*(fnm[3]-feq[3]) + (1.f-tauinv)*w3*g3*R*0.25f;
+      fnm[4] -= tauinv*(fnm[4]-feq[4]) + (1.f-tauinv)*w4*g4*R*0.25f;
+      fnm[5] -= tauinv*(fnm[5]-feq[5]) + (1.f-tauinv)*w5*g5*R*0.25f;
+      fnm[6] -= tauinv*(fnm[6]-feq[6]) + (1.f-tauinv)*w6*g6*R*0.25f;
+      fnm[7] -= tauinv*(fnm[7]-feq[7]) + (1.f-tauinv)*w7*g7*R*0.25f;
+      fnm[8] -= tauinv*(fnm[8]-feq[8]) + (1.f-tauinv)*w8*g8*R*0.25f;
+      
       // store new densities
       const int base = idx(N,n,m);
       fnew[base+0*Nall] = fnm[0];
@@ -298,14 +307,11 @@ void lbmUpdate(const int N,                  // number of nodes in x
 
 void lbmCheck(int N, int M, dfloat *f){
 
-  int n,m,s;
+  int n;
   int nanCount = 0;
-  for(s=0;s<NSPECIES;++s){
-    for(m=0;m<=M+1;++m){
-      for(n=0;n<=N+1;++n){
-	nanCount += isnan(f[idx(N,n,m)+s*(N+2)*(M+2)]);
-      }
-    }
+
+  for(n=0;n<NSPECIES*N*M;++n){
+    nanCount += isnan(f[n]);
   }
   
   if(nanCount){   printf("found %d nans\n", nanCount); exit(-1); }
@@ -344,6 +350,37 @@ void lbmInitialConditions(dfloat c, int N, int M, int *nodeType, dfloat *f){
   }
 }
 
+void lbmRun(int N,
+	    int M,
+	    unsigned char *rgb,
+	    unsigned char *alpha, 
+	    dfloat c,
+	    dfloat dx,
+	    dfloat *h_tau,
+	    int *nodeType,
+	    dfloat *f,
+	    dfloat *fnew){
+  
+  int Nsteps = 300000/2, tstep = 0, iostep = 100;
+
+  // time step
+  for(tstep=0;tstep<Nsteps;++tstep){
+
+    // perform two updates
+    lbmUpdate(N, M, c, h_tau, nodeType, f, fnew);
+    lbmUpdate(N, M, c, h_tau, nodeType, fnew, f);
+
+    // check for nans
+    lbmCheck(N, M, f);
+    if(!(tstep%iostep)){
+      printf("tstep = %d\n", tstep);
+      char fname[BUFSIZ];
+      sprintf(fname, "bah%06d.png", tstep/iostep);
+      lbmOutput(fname, nodeType, rgb, alpha, c, dx, N, M, f);
+    }
+  }
+}
+
 int main(int argc, char **argv){
 
   if(argc!=3){
@@ -366,10 +403,9 @@ int main(int argc, char **argv){
 
   // physical parameters
   dfloat dx = .01;    // lattice node spacings in x
-  dfloat dy = .01;
   dfloat dt = dx*.1; // time step (also determines Mach number)
   dfloat c  = dx/dt; // speed of sound
-  dfloat tau = .525; // relaxation rate
+  dfloat tau = .61; // relaxation rate
   dfloat Reynolds = 2./((tau-.5)*c*c*dt/3.);
 
   printf("Reynolds number %g\n", Reynolds);
@@ -393,27 +429,10 @@ int main(int argc, char **argv){
   // set initial flow densities
   lbmInitialConditions(c, N, M, nodeType, f);
   lbmInitialConditions(c, N, M, nodeType, fnew);
+
+  // time step the LBM solver
+  lbmRun(N, M, rgb, alpha, c, dx, h_tau, nodeType, f, fnew);
   
-  int Nsteps = 30000/2, tstep = 0, iostep = 100;
-
-  // time step
-  for(tstep=0;tstep<Nsteps;++tstep){
-
-    // perform two updates
-    lbmUpdate(N, M, c, h_tau, nodeType, f, fnew);
-    lbmUpdate(N, M, c, h_tau, nodeType, fnew, f);
-
-    // check for nans
-    lbmCheck(N, M, f);
-    if(!(tstep%iostep)){
-      printf("tstep = %d\n", tstep);
-      char fname[BUFSIZ];
-      sprintf(fname, "bah%06d.png", tstep);
-      lbmOutput(fname, nodeType, rgb, alpha, c, dx, N, M, f);
-    }
-  }
-
-
   // output result as image
   lbmOutput("bahFinal.png", nodeType, rgb, alpha, c, dx, N, M, f);
 
