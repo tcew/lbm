@@ -10,7 +10,8 @@ extern "C"
 #include "png_util.h"
 }
 
-#define dfloat double
+#define dfloat       float
+#define dfloatString "float"
 #define FLUID 0
 #define WALL 1
 #define NSPECIES 9
@@ -81,8 +82,6 @@ void lbmInput(const char *imageFileName,
   free(*rgb); free(*alpha);
   *rgb = rgbPad;
   *alpha = alphaPad;
-
-  
   
   printf("wallCount = %d (%g percent of %d x %d nodes)\n", wallCount, 100.*((dfloat)wallCount/((Npad+2)*(Mpad+2))), Npad, Mpad);
   
@@ -181,8 +180,15 @@ void lbmOutput(const char *fname,
 }
 
 // weights used to compute equilibrium distribution (post collision)
-const dfloat w0 = 4.f/9.f, w1 = 1.f/9.f, w2 = 1.f/9.f, w3 =  1.f/9.f;
-const dfloat w4 = 1.f/9.f, w5 = 1.f/36.f, w6 = 1.f/36.f, w7 = 1.f/36.f, w8 = 1.f/36.f;
+const dfloat w0 = 4./9., w1 = 1./9., w2 = 1./9., w3 =  1./9.;
+const dfloat w4 = 1./9., w5 = 1./36., w6 = 1./36., w7 = 1./36., w8 = 1./36.;
+
+// MRT stabilization
+const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
+const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
+
+
+
 
 void lbmEquilibrium(const dfloat c,
 		    const dfloat rho,
@@ -266,6 +272,117 @@ void lbmInitialConditions(dfloat c, int N, int M, int *nodeType, dfloat *f){
   }
 }
 
+void lbmUpdate(const int N,                  // number of nodes in x
+	       const int M,                  // number of nodes in y
+	       const dfloat c,                // speed of sound
+	       const dfloat *tau,              // relaxation rate
+	       const int   *  nodeType,      // (N+2) x (M+2) node types 
+	       const dfloat *  f,             // (N+2) x (M+2) x 9 fields before streaming and collisions
+	       dfloat *  fnew){               // (N+2) x (M+2) x 9 fields after streaming and collisions
+
+  // loop counters
+  int n,m;
+
+  // number of nodes in whole array including halo
+  int Nall = (N+2)*(M+2);
+  
+  // loop over all non-halo nodes in lattice
+
+  for(m=1;m<M+1;++m){
+    for(n=1;n<=N+1;++n){
+
+      // physics paramaters
+      dfloat tauinv = 1.f/tau[idx(N,n,m)];
+      
+      // discover type of node (WALL or FLUID)
+      const int nt = nodeType[idx(N,n,m)];
+      dfloat fnm[NSPECIES];
+
+      // OUTFLOW
+      if(n==N+1){
+	fnm[0] = f[idx(N,n,  m)   + 0*Nall]; // stationary 
+	fnm[1] = f[idx(N,n-1,m)   + 1*Nall]; // E bound from W
+	fnm[2] = f[idx(N,n,m-1)   + 2*Nall]; // N bound from S
+	fnm[3] = f[idx(N,n,m)     + 3*Nall]; // W bound from E
+	fnm[4] = f[idx(N,n,m+1)   + 4*Nall]; // S bound from N
+	fnm[5] = f[idx(N,n-1,m-1) + 5*Nall]; // NE bound from SW
+	fnm[6] = f[idx(N,n,m-1)   + 6*Nall]; // NW bound from SE
+	fnm[7] = f[idx(N,n,m+1)   + 7*Nall]; // SW bound from NE
+	fnm[8] = f[idx(N,n-1,m+1) + 8*Nall]; // SE bound from NW
+      }
+      else if(nt == FLUID){
+	fnm[0] = f[idx(N,n,  m)   + 0*Nall]; // stationary 
+	fnm[1] = f[idx(N,n-1,m)   + 1*Nall]; // E bound from W
+	fnm[2] = f[idx(N,n,m-1)   + 2*Nall]; // N bound from S
+	fnm[3] = f[idx(N,n+1,m)   + 3*Nall]; // W bound from E
+	fnm[4] = f[idx(N,n,m+1)   + 4*Nall]; // S bound from N
+	fnm[5] = f[idx(N,n-1,m-1) + 5*Nall]; // NE bound from SW
+	fnm[6] = f[idx(N,n+1,m-1) + 6*Nall]; // NW bound from SE
+	fnm[7] = f[idx(N,n+1,m+1) + 7*Nall]; // SW bound from NE
+	fnm[8] = f[idx(N,n-1,m+1) + 8*Nall]; // SE bound from NW
+      }
+      else{
+	// WALL reflects particles
+	fnm[0] = f[idx(N,n,m) + 0*Nall]; // stationary 
+	fnm[1] = f[idx(N,n,m) + 3*Nall]; // E bound from W
+	fnm[2] = f[idx(N,n,m) + 4*Nall]; // N bound from S
+	fnm[3] = f[idx(N,n,m) + 1*Nall]; // W bound from E
+	fnm[4] = f[idx(N,n,m) + 2*Nall]; // S bound from N
+	fnm[5] = f[idx(N,n,m) + 7*Nall]; // NE bound from SW
+	fnm[6] = f[idx(N,n,m) + 8*Nall]; // NW bound from SE
+	fnm[7] = f[idx(N,n,m) + 5*Nall]; // SW bound from NE
+	fnm[8] = f[idx(N,n,m) + 6*Nall]; // SE bound from NW
+      }
+
+      // macroscopic density
+      const dfloat rho = fnm[0]+fnm[1]+fnm[2]+fnm[3]+fnm[4]+fnm[5]+fnm[6]+fnm[7]+fnm[8];
+
+      if(rho<1e-4){ printf("rho(%d,%d)=%g\n", n,m,rho); exit(-1); }
+      
+      // macroscopic momentum
+      const dfloat delta2 = 1e-5; 
+      const dfloat Ux = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*c/sqrt(rho*rho+delta2);
+      const dfloat Uy = (fnm[2] - fnm[4] + fnm[5] + fnm[6] - fnm[7] - fnm[8])*c/sqrt(rho*rho+delta2);
+
+      // compute equilibrium distribution
+      dfloat feq[NSPECIES];
+      lbmEquilibrium(c, rho, Ux, Uy, feq);
+
+
+      // MRT stabilization
+      const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
+      const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
+      
+      const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
+    
+      // relax towards post collision densities
+      fnm[0] -= tauinv*(fnm[0]-feq[0]) + (1.f-tauinv)*w0*g0*R*0.25f;
+      fnm[1] -= tauinv*(fnm[1]-feq[1]) + (1.f-tauinv)*w1*g1*R*0.25f;
+      fnm[2] -= tauinv*(fnm[2]-feq[2]) + (1.f-tauinv)*w2*g2*R*0.25f;
+      fnm[3] -= tauinv*(fnm[3]-feq[3]) + (1.f-tauinv)*w3*g3*R*0.25f;
+      fnm[4] -= tauinv*(fnm[4]-feq[4]) + (1.f-tauinv)*w4*g4*R*0.25f;
+      fnm[5] -= tauinv*(fnm[5]-feq[5]) + (1.f-tauinv)*w5*g5*R*0.25f;
+      fnm[6] -= tauinv*(fnm[6]-feq[6]) + (1.f-tauinv)*w6*g6*R*0.25f;
+      fnm[7] -= tauinv*(fnm[7]-feq[7]) + (1.f-tauinv)*w7*g7*R*0.25f;
+      fnm[8] -= tauinv*(fnm[8]-feq[8]) + (1.f-tauinv)*w8*g8*R*0.25f;
+      
+      // store new densities
+      const int base = idx(N,n,m);
+      fnew[base+0*Nall] = fnm[0];
+      fnew[base+1*Nall] = fnm[1];
+      fnew[base+2*Nall] = fnm[2];
+      fnew[base+3*Nall] = fnm[3];
+      fnew[base+4*Nall] = fnm[4];
+      fnew[base+5*Nall] = fnm[5];
+      fnew[base+6*Nall] = fnm[6];
+      fnew[base+7*Nall] = fnm[7];
+      fnew[base+8*Nall] = fnm[8];
+    }
+  }
+}
+
+
+
 int main(int argc, char **argv){
 
   if(argc!=3){
@@ -274,7 +391,9 @@ int main(int argc, char **argv){
   }
 
   occa::device device;
-  device.setup("mode=OpenMP, deviceID=0");
+  //  device.setup("mode=OpenCL, deviceID=1, platformID=0");
+  device.setup("mode=CUDA, deviceID=0");
+  //  device.setup("mode=OpenMP");
   
   // read threshold 
   dfloat threshold = atof(argv[2]);
@@ -321,7 +440,36 @@ int main(int argc, char **argv){
   occa::memory o_tau      = device.malloc((N+2)*(M+2)*sizeof(dfloat),           h_tau);
 
   // OCCA DEVICE kernel
-  occa::kernel lbmUpdate = device.buildKernelFromSource("occaLBM.okl", "lbmUpdate");
+  occa::kernelInfo info;
+
+  info.addDefine("TX", 16);
+  info.addDefine("TY", 16);
+  info.addDefine("FLUID", FLUID);
+  info.addDefine("WALL", WALL);
+  info.addDefine("NSPECIES", NSPECIES);
+  
+  info.addDefine("w0", w0); 
+  info.addDefine("w1", w1); 
+  info.addDefine("w2", w2); 
+  info.addDefine("w3", w3); 
+  info.addDefine("w4", w4);
+  info.addDefine("w5", w5);
+  info.addDefine("w6", w6);
+  info.addDefine("w7", w7);
+  info.addDefine("w8", w8);
+
+  info.addDefine("g0", g0);
+  info.addDefine("g1", g1);
+  info.addDefine("g2", g2);
+  info.addDefine("g3", g3);  
+  info.addDefine("g4", g4);
+  info.addDefine("g5", g5);  
+  info.addDefine("g6", g6);
+  info.addDefine("g7", g7);
+  info.addDefine("g8", g8);
+  info.addDefine("dfloat", dfloatString);
+
+  occa::kernel lbmUpdateKernel = device.buildKernelFromSource("occaLBM.okl", "lbmUpdate", info);
   
   int Nsteps = 480000/2, tstep = 0, iostep = 100;
 
@@ -329,15 +477,31 @@ int main(int argc, char **argv){
   for(tstep=0;tstep<Nsteps;++tstep){
 
     // perform two updates
-    lbmUpdate(N, M, c, o_tau, o_nodeType, o_f, o_fnew);
-    lbmUpdate(N, M, c, o_tau, o_nodeType, o_fnew, o_f);
+#if 0
+    lbmUpdateKernel(N, M, c, o_tau, o_nodeType, o_f, o_fnew);
 
+    lbmUpdateKernel(N, M, c, o_tau, o_nodeType, o_fnew, o_f);
+#endif
+
+    lbmUpdateKernel(N, M, c, o_tau, o_nodeType, o_f, o_fnew);
+    o_fnew.copyTo(h_fnew);
+    lbmUpdate(N, M, c, h_tau, h_nodeType, h_fnew, h_f);
+    o_f.copyFrom(h_f);
+
+    
+#if 0
+    o_f.copyTo(h_f);
+    lbmUpdate(N, M, c, h_tau, h_nodeType, h_f, h_fnew);
+    lbmUpdate(N, M, c, h_tau, h_nodeType, h_fnew, h_f);
+    o_f.copyFrom(h_f);
+#endif
     if(!(tstep%iostep)){ // output an image every iostep
       printf("tstep = %d\n", tstep);
       char fname[BUFSIZ];
       sprintf(fname, "bah%06d.png", tstep/iostep);
 
-      o_f.copyTo(h_f);
+      device.finish();
+      o_f.copyTo(h_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat));
       lbmOutput(fname, h_nodeType, rgb, alpha, c, dx, N, M, h_f);
 
       lbmCheck(N,M,h_f);

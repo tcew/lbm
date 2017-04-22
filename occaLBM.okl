@@ -1,47 +1,7 @@
-// http://www.caam.rice.edu/~timwar/CAAM210/Flows.html
-
-#define dfloat double
-#define FLUID 0
-#define WALL 1
-#define NSPECIES 9
-
 // loop up 1D array index from 2D node coordinates
-#define idx(N,n,m) ((n) + ((m)*(N+2)))
-
-// weights used to compute equilibrium distribution (post collision)
-const dfloat w0 = 4.f/9.f, w1 = 1.f/9.f, w2 = 1.f/9.f, w3 =  1.f/9.f;
-const dfloat w4 = 1.f/9.f, w5 = 1.f/36.f, w6 = 1.f/36.f, w7 = 1.f/36.f, w8 = 1.f/36.f;
-
-// MRT stabilization
-const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
-const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
-
-#define lbmEquilibrium(c, rho, Ux, Uy, feq) \
-  {					    \
-  const dfloat U2 = Ux*Ux+Uy*Uy;	    \
-  const dfloat v0 = 0;			    \
-  const dfloat v1 = +Ux/c;		    \
-  const dfloat v2 = +Uy/c;		    \
-  const dfloat v3 = -Ux/c;		    \
-  const dfloat v4 = -Uy/c;		    \
-  const dfloat v5 =  (+Ux+Uy)/c;	    \
-  const dfloat v6 =  (-Ux+Uy)/c;	    \
-  const dfloat v7 =  (-Ux-Uy)/c;	    \
-  const dfloat v8 =  (+Ux-Uy)/c;	    \
-								\
-  feq[0] = rho*w0*(1.f + 3.f*v0 + 4.5f*v0*v0 - 1.5f*U2/(c*c));	\
-  feq[1] = rho*w1*(1.f + 3.f*v1 + 4.5f*v1*v1 - 1.5f*U2/(c*c));	\
-  feq[2] = rho*w2*(1.f + 3.f*v2 + 4.5f*v2*v2 - 1.5f*U2/(c*c));	\
-  feq[3] = rho*w3*(1.f + 3.f*v3 + 4.5f*v3*v3 - 1.5f*U2/(c*c));	\
-  feq[4] = rho*w4*(1.f + 3.f*v4 + 4.5f*v4*v4 - 1.5f*U2/(c*c));\
-  feq[5] = rho*w5*(1.f + 3.f*v5 + 4.5f*v5*v5 - 1.5f*U2/(c*c));\
-  feq[6] = rho*w6*(1.f + 3.f*v6 + 4.5f*v6*v6 - 1.5f*U2/(c*c));\
-  feq[7] = rho*w7*(1.f + 3.f*v7 + 4.5f*v7*v7 - 1.5f*U2/(c*c));\
-  feq[8] = rho*w8*(1.f + 3.f*v8 + 4.5f*v8*v8 - 1.5f*U2/(c*c));\
-  }
-
-#define TX 32
-#define TY 8
+int idx(int N, int n, int m){
+  return (n + (m*(N+2)));
+}
 
 // perform lattice streaming and collision steps
 kernel void lbmUpdate(const int N,                  // number of nodes in x
@@ -113,32 +73,50 @@ kernel void lbmUpdate(const int N,                  // number of nodes in x
 	    // macroscopic density
 	    const dfloat rho = fnm[0]+fnm[1]+fnm[2]+fnm[3]+fnm[4]+fnm[5]+fnm[6]+fnm[7]+fnm[8];
     
-	    //    if(rho<1e-4){ printf("rho(%d,%d)=%g\n", n,m,rho); exit(-1); }
-    
 	    // macroscopic momentum
-	    const dfloat delta2 = 1e-8;
-	    const dfloat Ux = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*c/occaSqrt(rho*rho+delta2);
-	    const dfloat Uy = (fnm[2] - fnm[4] + fnm[5] + fnm[6] - fnm[7] - fnm[8])*c/occaSqrt(rho*rho+delta2);
+	    const dfloat Ux = (fnm[1] -fnm[3] +fnm[5] -fnm[6] -fnm[7] +fnm[8])*c/rho;
+	    const dfloat Uy = (fnm[2] -fnm[4] +fnm[5] +fnm[6] -fnm[7] -fnm[8])*c/rho;
 
 	    // compute equilibrium distribution
 	    dfloat feq[NSPECIES];
-	    lbmEquilibrium(c, rho, Ux, Uy, feq);
 
+	    const dfloat U2 = Ux*Ux+Uy*Uy;			
+	    const dfloat v0 = 0;				
+	    const dfloat v1 = +Ux/c;				
+	    const dfloat v2 = +Uy/c;				
+	    const dfloat v3 = -Ux/c;				
+	    const dfloat v4 = -Uy/c;				
+	    const dfloat v5 =  (+Ux+Uy)/c;			
+	    const dfloat v6 =  (-Ux+Uy)/c;			
+	    const dfloat v7 =  (-Ux-Uy)/c;			
+	    const dfloat v8 =  (+Ux-Uy)/c;			
+	  	    								
+	    feq[0] = rho*w0*(1.f + 3.f*v0 + 4.5f*v0*v0 -1.5f*U2/(c*c)); 
+	    feq[1] = rho*w1*(1.f + 3.f*v1 + 4.5f*v1*v1 -1.5f*U2/(c*c)); 
+	    feq[2] = rho*w2*(1.f + 3.f*v2 + 4.5f*v2*v2 -1.5f*U2/(c*c)); 
+	    feq[3] = rho*w3*(1.f + 3.f*v3 + 4.5f*v3*v3 -1.5f*U2/(c*c)); 
+	    feq[4] = rho*w4*(1.f + 3.f*v4 + 4.5f*v4*v4 -1.5f*U2/(c*c)); 
+	    feq[5] = rho*w5*(1.f + 3.f*v5 + 4.5f*v5*v5 -1.5f*U2/(c*c)); 
+	    feq[6] = rho*w6*(1.f + 3.f*v6 + 4.5f*v6*v6 -1.5f*U2/(c*c)); 
+	    feq[7] = rho*w7*(1.f + 3.f*v7 + 4.5f*v7*v7 -1.5f*U2/(c*c)); 
+	    feq[8] = rho*w8*(1.f + 3.f*v8 + 4.5f*v8*v8 -1.5f*U2/(c*c)); 
+	    
 	    const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
         
 	    // post collision densities
-	    fnm[0] -= tauinv*(fnm[0]-feq[0]) + (1.f-tauinv)*w0*g0*R*0.25f;
-	    fnm[1] -= tauinv*(fnm[1]-feq[1]) + (1.f-tauinv)*w1*g1*R*0.25f;
-	    fnm[2] -= tauinv*(fnm[2]-feq[2]) + (1.f-tauinv)*w2*g2*R*0.25f;
-	    fnm[3] -= tauinv*(fnm[3]-feq[3]) + (1.f-tauinv)*w3*g3*R*0.25f;
-	    fnm[4] -= tauinv*(fnm[4]-feq[4]) + (1.f-tauinv)*w4*g4*R*0.25f;
-	    fnm[5] -= tauinv*(fnm[5]-feq[5]) + (1.f-tauinv)*w5*g5*R*0.25f;
-	    fnm[6] -= tauinv*(fnm[6]-feq[6]) + (1.f-tauinv)*w6*g6*R*0.25f;
-	    fnm[7] -= tauinv*(fnm[7]-feq[7]) + (1.f-tauinv)*w7*g7*R*0.25f;
-	    fnm[8] -= tauinv*(fnm[8]-feq[8]) + (1.f-tauinv)*w8*g8*R*0.25f;
+	    fnm[0] = fnm[0] -tauinv*(fnm[0]-feq[0]) - (1.f-tauinv)*w0*g0*R*0.25f;
+	    fnm[1] = fnm[1] -tauinv*(fnm[1]-feq[1]) - (1.f-tauinv)*w1*g1*R*0.25f;
+	    fnm[2] = fnm[2] -tauinv*(fnm[2]-feq[2]) - (1.f-tauinv)*w2*g2*R*0.25f;
+	    fnm[3] = fnm[3] -tauinv*(fnm[3]-feq[3]) - (1.f-tauinv)*w3*g3*R*0.25f;
+	    fnm[4] = fnm[4] -tauinv*(fnm[4]-feq[4]) - (1.f-tauinv)*w4*g4*R*0.25f;
+	    fnm[5] = fnm[5] -tauinv*(fnm[5]-feq[5]) - (1.f-tauinv)*w5*g5*R*0.25f;
+	    fnm[6] = fnm[6] -tauinv*(fnm[6]-feq[6]) - (1.f-tauinv)*w6*g6*R*0.25f;
+	    fnm[7] = fnm[7] -tauinv*(fnm[7]-feq[7]) - (1.f-tauinv)*w7*g7*R*0.25f;
+	    fnm[8] = fnm[8] -tauinv*(fnm[8]-feq[8]) - (1.f-tauinv)*w8*g8*R*0.25f;
     
 	    // store new densities
 	    const int base = idx(N,n,m);
+	    //	    printf("fnm=%g,%g,%g,%g,%g,%g,%g,%g,base=%d,Nall=%d\n", fnm[0], fnm[1], fnm[2], fnm[3], fnm[4], fnm[5], fnm[6], fnm[7], fnm[8], base, Nall);
 	    fnew[base+0*Nall] = fnm[0];
 	    fnew[base+1*Nall] = fnm[1];
 	    fnew[base+2*Nall] = fnm[2];
@@ -154,3 +132,4 @@ kernel void lbmUpdate(const int N,                  // number of nodes in x
     }
   }
 }
+
