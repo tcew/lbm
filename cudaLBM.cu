@@ -9,7 +9,7 @@ extern "C"
 #include "png_util.h"
 }
 
-#define dfloat double
+#define dfloat float
 
 #define FLUID 0
 #define WALL 1
