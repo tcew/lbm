@@ -39,7 +39,6 @@ void lbmInput(const char *imageFileName,
   // pad to guarantee space around obstacle and extend the wake
   int Npad = 3*N;
   int Mpad = 2*M;
-  //int Mpad = M;
 
   if(Npad>8192) Npad = 8192;
   if(Mpad>8192) Mpad = 8192;
@@ -59,8 +58,9 @@ void lbmInput(const char *imageFileName,
       dfloat b = (*rgb)[3*offset+2];
       dfloat a = (*alpha) ? (*alpha)[offset]:255;
       // center image in padded region (including halo zone)
-      //   int hoffset = N/4, yoffset = M/2;
+
       int hoffset = N/4, yoffset = M/2;
+
       int id = idx(Npad,n+hoffset,m+yoffset);
 
       if(a==0)
@@ -84,8 +84,6 @@ void lbmInput(const char *imageFileName,
   free(*rgb); free(*alpha);
   *rgb = rgbPad;
   *alpha = alphaPad;
-
-  
   
   printf("wallCount = %d (%g percent of %d x %d nodes)\n", wallCount, 100.*((dfloat)wallCount/((Npad+2)*(Mpad+2))), Npad, Mpad);
   
@@ -154,14 +152,14 @@ void lbmOutput(const char *fname,
 #else
 	a = 255;
 	if(curlU>.55){
-	  r = 255*curlU;
+	  r = 255*(curlU-.55)/.45;
 	  g = 0;
 	  b = 0;
 	}
 	else if(curlU<.45){
 	  r = 0;
 	  g = 0;
-	  b = 255*curlU;
+	  b = 255*(.45-curlU)/.45;
 	}
 	else{
 	  r = 255;
@@ -429,22 +427,22 @@ void lbmCheck(int N, int M, dfloat *f){
 
 // set initial conditions (use uniform flow f everywhere)
 void lbmInitialConditions(dfloat c, int N, int M, int *nodeType, dfloat *f){
-  int n,m,s;
+  int n,m;
   dfloat feqIC[NSPECIES];
   dfloat feqWALL[NSPECIES];
   dfloat rhoIC = 1.;
   dfloat UxIC = 1.;
   dfloat UyIC = 0.;
 
-  lbmEquilibrium(c, rhoIC, UxIC, UyIC, feqIC);
   lbmEquilibrium(c, rhoIC,    0.,  0., feqWALL);
-
+  lbmEquilibrium(c, rhoIC, UxIC, UyIC, feqIC);
+  
   for(m=0;m<=M+1;++m){
     for(n=0;n<=N+1;++n){
       int base = idx(N, n, m);
       int s;
 
-      if(n==0){
+      if(n==0 || m==0 || m==M+1){
 	for(s=0;s<NSPECIES;++s){
 	  f[idx(N,n,m)+s*(N+2)*(M+2)] = feqIC[s];
 	}
@@ -478,7 +476,7 @@ int main(int argc, char **argv){
   dfloat dx = .01;    // lattice node spacings 
   dfloat dt = dx*.1; // time step (also determines Mach number)
   dfloat c  = dx/dt; // speed of sound
-  dfloat tau = .63; // relaxation rate
+  dfloat tau = .57; // relaxation rate
   dfloat Reynolds = 2./((tau-.5)*c*c*dt/3.);
 
   printf("Reynolds number %g\n", Reynolds);
