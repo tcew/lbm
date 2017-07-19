@@ -8,7 +8,7 @@ CXXFLAGS =
 include ${OCCA_DIR}/scripts/makefile
 
 # define variables
-HDRDIR  = ./
+HDRDIR  = ./ 
 
 # set options for this machine
 # specify which compilers to use for c, fortran and linking
@@ -17,13 +17,13 @@ CC	= g++
 LD	= g++
 
 # compiler flags to be used (set to compile with debugging on)
-CFLAGS = -O3 -I$(HDRDIR)
+CFLAGS = -O3 -I$(HDRDIR) -I/opt/local/include/
 
 # link flags to be used 
 LDFLAGS	= $(compilerFlags) $(flags) -O3 
 
 # libraries to be linked in
-LIBS	=  $(links) -llapack -lblas -lpng
+LIBS	=  $(links) -llapack -lblas -L/opt/local/lib/ -lpng
 
 # types of files we are going to construct rules for
 .SUFFIXES: .c 

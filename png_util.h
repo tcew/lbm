@@ -24,6 +24,7 @@
 #include <string.h>
 
 #include <png.h>
+//#include <png.h>
 
 int read_png(const char *filename, int *width, int *height, unsigned char **rgb, 
 	     unsigned char **alpha);

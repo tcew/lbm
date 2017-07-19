@@ -54,7 +54,7 @@ read_png(const char *filename, int *width, int *height, unsigned char **rgb,
       return(0);
     }
   
-  if (setjmp(png_ptr->jmpbuf))
+  if (setjmp(png_jmpbuf(png_ptr)))
     {
       png_destroy_read_struct(&png_ptr, &info_ptr, (png_infopp) NULL);
       fclose(infile);
