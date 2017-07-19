@@ -37,7 +37,6 @@ void lbmInput(const char *imageFileName,
   // pad to guarantee space around obstacle and extend the wake
   int Npad = 3*N;
   int Mpad = 2*M;
-  //int Mpad = M;
 
   if(Npad>8192) Npad = 8192;
   if(Mpad>8192) Mpad = 8192;
@@ -149,14 +148,14 @@ void lbmOutput(const char *fname,
 #else
 	a = 255;
 	if(curlU>.55){
-	  r = 255*curlU;
+	  r = 255*(curlU-.55)/.45;
 	  g = 0;
 	  b = 0;
 	}
 	else if(curlU<.45){
 	  r = 0;
 	  g = 0;
-	  b = 255*curlU;
+	  b = 255*(.45-curlU)/.45;
 	}
 	else{
 	  r = 255;
@@ -477,24 +476,10 @@ int main(int argc, char **argv){
   for(tstep=0;tstep<Nsteps;++tstep){
 
     // perform two updates
-#if 0
     lbmUpdateKernel(N, M, c, o_tau, o_nodeType, o_f, o_fnew);
 
     lbmUpdateKernel(N, M, c, o_tau, o_nodeType, o_fnew, o_f);
-#endif
 
-    lbmUpdateKernel(N, M, c, o_tau, o_nodeType, o_f, o_fnew);
-    o_fnew.copyTo(h_fnew);
-    lbmUpdate(N, M, c, h_tau, h_nodeType, h_fnew, h_f);
-    o_f.copyFrom(h_f);
-
-    
-#if 0
-    o_f.copyTo(h_f);
-    lbmUpdate(N, M, c, h_tau, h_nodeType, h_f, h_fnew);
-    lbmUpdate(N, M, c, h_tau, h_nodeType, h_fnew, h_f);
-    o_f.copyFrom(h_f);
-#endif
     if(!(tstep%iostep)){ // output an image every iostep
       printf("tstep = %d\n", tstep);
       char fname[BUFSIZ];

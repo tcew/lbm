@@ -476,7 +476,7 @@ int main(int argc, char **argv){
   dfloat dx = .01;    // lattice node spacings 
   dfloat dt = dx*.1; // time step (also determines Mach number)
   dfloat c  = dx/dt; // speed of sound
-  dfloat tau = .57; // relaxation rate
+  dfloat tau = .6; // relaxation rate
   dfloat Reynolds = 2./((tau-.5)*c*c*dt/3.);
 
   printf("Reynolds number %g\n", Reynolds);
