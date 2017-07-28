@@ -182,86 +182,6 @@ void lbmOutput(const char *fname,
   free(Uy);
 }
 
-#if 0
-void lbmOutputMicro(const char *fname,
-		    const int *nodeType,
-		    unsigned char *rgb,
-		    unsigned char *alpha,
-		    const dfloat c,
-		    const dfloat dx,
-		    int N,
-		    int M,
-		    const dfloat *f){
-  int n,m,s;
-  FILE *bah = fopen(fname, "w");
-
-  unsigned char *rgb3 = (unsigned char*) calloc(3*NSPECIES*(N+2)*(M+2), sizeof(unsigned char));
-  unsigned char *alpha3 = (unsigned char*) calloc(3*NSPECIES*(N+2)*(M+2), sizeof(unsigned char));
-
-  int soffsets[NSPECIES];
-  soffsets[0] = 0;
-  soffsets[1] = 1;
-  soffsets[2] = 3*(N+2);
-  soffsets[3] = -1;
-  soffsets[4] = -3*(N+2);
-  soffsets[5] = 3*(N+2)+1;
-  soffsets[6] = 3*(N+2)-1;
-  soffsets[7] = -3*(N+2)-1;
-  soffsets[8] = -3*(N+2)+1;
-  
-  // compute vorticity
-  dfloat plotMin = -1, plotMax = 1;
-  for(s=0;s<NSPECIES;++s){
-    for(m=1;m<=M;++m){
-      for(n=1;n<=N;++n){
-	int id = idx(N,n,m);
-	
-	int soffset = soffsets[s];
-
-	unsigned char r,g,b,a;
-	r = rgb[idx(N,n,m)*3+0];
-	g = rgb[idx(N,n,m)*3+1];
-	b = rgb[idx(N,n,m)*3+2];
-
-	// over write pixels in fluid region
-	if(nodeType[id]==FLUID){
-
-	  dfloat fs = f[idx(N,n,m)+s*(N+2)*(M+2)];
-	  fs = ((fs-plotMin)/(plotMax-plotMin));
-	  
-	  a = 255;
-	  if(fs>.6){
-	    r = 255*fs;
-	    g = 0;
-	    b = 0;
-	  }
-	  else if(fs<.4){
-	    r = 0;
-	    g = 0;
-	    b = 255*fs;
-	  }
-	  else{
-	    r = 255;
-	    g = 255;
-	    b = 255;
-	  }
-	  int base = 3*n + 9*(N+2)*m+soffset;
-	  rgb3[base*3+0] = r;
-	  rgb3[base*3+1] = g;
-	  rgb3[base*3+2] = b;
-	  alpha3[base] = a;
-	}
-      }
-    }
-  }
-  
-  write_png(bah, 3*(N+2), 3*(M+2), rgb3, alpha3);
-
-  fclose(bah);
-  free(rgb3);
-  free(alpha3);
-}
-#endif
 
 // weights used to compute equilibrium distribution (post collision)
 const dfloat w0 = 4.f/9.f, w1 = 1.f/9.f, w2 = 1.f/9.f, w3 =  1.f/9.f;
@@ -533,10 +453,8 @@ int main(int argc, char **argv){
       sprintf(fname, "bah%06d.png", tstep/iostep);
 
       cudaMemcpy(h_f, c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyDeviceToHost);
-      lbmOutput(fname, nodeType, rgb, alpha, c, dx, N, M, h_f);
 
-      //      sprintf(fname, "vel%06d.png", tstep/iostep);
-      //      lbmOutputMicro(fname, nodeType, rgb, alpha, c, dx, N, M, h_f);
+      lbmOutput(fname, nodeType, rgb, alpha, c, dx, N, M, h_f);
 
       lbmCheck(N,M,h_f);
     }
