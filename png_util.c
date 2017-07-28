@@ -69,7 +69,8 @@ read_png(const char *filename, int *width, int *height, unsigned char **rgb,
 
   *width = (int) w;
   *height = (int) h;
-    
+  *alpha = NULL;
+
   if (color_type == PNG_COLOR_TYPE_RGB_ALPHA
       || color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
     {
