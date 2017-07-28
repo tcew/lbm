@@ -391,8 +391,8 @@ int main(int argc, char **argv){
 
   occa::device device;
   //  device.setup("mode=OpenCL, deviceID=1, platformID=0");
-  //  device.setup("mode=CUDA, deviceID=0");
-  device.setup("mode=OpenMP");
+  device.setup("mode=CUDA, deviceID=0");
+  //  device.setup("mode=OpenMP");
   
   // read threshold 
   dfloat threshold = atof(argv[2]);
