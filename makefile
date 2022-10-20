@@ -10,11 +10,11 @@ NLD	= nvcc
 
 # compiler flags to be used (set to compile with debugging on)
 CFLAGS = -I$(HDRDIR)  -fopenmp -g -O3
-NCFLAGS = -I$(HDRDIR)   -g --use_fast_math --fmad=true -arch=sm_30
+NCFLAGS = -I$(HDRDIR) -O3  --use_fast_math --fmad=true -arch=sm_61
 
 
 # link flags to be used 
-LDFLAGS	=  -fopenmp -g -O3
+LDFLAGS	=  -fopenmp -O3
 NLDFLAGS =
 
 # libraries to be linked in
