@@ -16,6 +16,14 @@ extern "C"
 
 #define NSPECIES 9
 
+#ifndef NHALO 
+#define NHALO 4
+#define NSUBSTEPS (NHALO)
+#endif
+
+#define TX 32
+#define TY 32
+
 #include "cuda.h"
 
 // loop up 1D array index from 2D node coordinates
@@ -218,11 +226,9 @@ __host__ __device__ void lbmEquilibrium(const dfloat c,
   feq[8] = rho*w8*(1.f + 3.f*v8 + 4.5f*v8*v8 - 1.5f*U2/(c*c));
 }
 
-#define TX 32
-#define TY 8
 
 // perform lattice streaming and collision steps
-__global__ void lbmUpdate(const int N,                  // number of nodes in x
+__global__ void lbmUpdateV0(const int N,                  // number of nodes in x
 			  const int M,                  // number of nodes in y
 			  const dfloat c,                // speed of sound
 			  const dfloat * __restrict__ tau,           // relaxation rate
@@ -312,7 +318,7 @@ __global__ void lbmUpdate(const int N,                  // number of nodes in x
     fnm[6] -= tauinv*(fnm[6]-feq[6]) + (1.f-tauinv)*w6*g6*R*0.25f;
     fnm[7] -= tauinv*(fnm[7]-feq[7]) + (1.f-tauinv)*w7*g7*R*0.25f;
     fnm[8] -= tauinv*(fnm[8]-feq[8]) + (1.f-tauinv)*w8*g8*R*0.25f;
-    
+      
     // store new densities
     const int base = idx(N,n,m);
     fnew[base+0*Nall] = fnm[0];
@@ -327,6 +333,392 @@ __global__ void lbmUpdate(const int N,                  // number of nodes in x
   }
   
 }
+
+
+
+__global__ void lbmUpdateV1(const int N,                  // number of nodes in x
+			    const int M,                  // number of nodes in y
+			    const dfloat c,                // speed of sound
+			    const dfloat * __restrict__ tau,           // relaxation rate
+			    const int    * __restrict__ nodeType,      // (N+2) x (M+2) node types 
+			    const dfloat * __restrict__ f,             // (N+2) x (M+2) x 9 fields before streaming and collisions
+			    dfloat * __restrict__ fnew){               // (N+2) x (M+2) x 9 fields after streaming and collisions
+  
+  // number of nodes in whole array including halo
+  int Nall = (N+2)*(M+2);
+  int tx = threadIdx.x;
+  int ty = threadIdx.y;
+  
+  // loop over all non-halo nodes in lattice
+  int n = -(NHALO) + 1 + tx + blockIdx.x*(TX-2*NHALO);
+  int m = -(NHALO) + 1 + ty + blockIdx.y*(TY-2*NHALO);
+
+  if(m>=1 && m<M+1 && n>=1 && n<=N+1){
+
+    // physics paramaters
+    dfloat tauinv = 1.f/tau[idx(N,n,m)];
+    
+    // discover type of node (WALL or FLUID)
+    const int nt = nodeType[idx(N,n,m)];
+    dfloat fnm[NSPECIES];
+    
+    // OUTFLOW
+    if(n==N+1){
+      fnm[0] = f[idx(N,n,  m)   + 0*Nall]; // stationary 
+      fnm[1] = f[idx(N,n-1,m)   + 1*Nall]; // E bound from W
+      fnm[2] = f[idx(N,n,m-1)   + 2*Nall]; // N bound from S
+      fnm[3] = f[idx(N,n,m)     + 3*Nall]; // W bound from E
+      fnm[4] = f[idx(N,n,m+1)   + 4*Nall]; // S bound from N
+      fnm[5] = f[idx(N,n-1,m-1) + 5*Nall]; // NE bound from SW
+      fnm[6] = f[idx(N,n,m-1)   + 6*Nall]; // NW bound from SE
+      fnm[7] = f[idx(N,n,m+1)   + 7*Nall]; // SW bound from NE
+      fnm[8] = f[idx(N,n-1,m+1) + 8*Nall]; // SE bound from NW      
+    }
+    else if(nt == FLUID){
+      fnm[0] = f[idx(N,n,  m)   + 0*Nall]; // stationary 
+      fnm[1] = f[idx(N,n-1,m)   + 1*Nall]; // E bound from W
+      fnm[2] = f[idx(N,n,m-1)   + 2*Nall]; // N bound from S
+      fnm[3] = f[idx(N,n+1,m)   + 3*Nall]; // W bound from E
+      fnm[4] = f[idx(N,n,m+1)   + 4*Nall]; // S bound from N
+      fnm[5] = f[idx(N,n-1,m-1) + 5*Nall]; // NE bound from SW
+      fnm[6] = f[idx(N,n+1,m-1) + 6*Nall]; // NW bound from SE
+      fnm[7] = f[idx(N,n+1,m+1) + 7*Nall]; // SW bound from NE
+      fnm[8] = f[idx(N,n-1,m+1) + 8*Nall]; // SE bound from NW
+    }
+    else{
+      // WALL reflects particles
+      fnm[0] = f[idx(N,n,m) + 0*Nall]; // stationary 
+      fnm[1] = f[idx(N,n,m) + 3*Nall]; // E bound from W
+      fnm[2] = f[idx(N,n,m) + 4*Nall]; // N bound from S
+      fnm[3] = f[idx(N,n,m) + 1*Nall]; // W bound from E
+      fnm[4] = f[idx(N,n,m) + 2*Nall]; // S bound from N
+      fnm[5] = f[idx(N,n,m) + 7*Nall]; // NE bound from SW
+      fnm[6] = f[idx(N,n,m) + 8*Nall]; // NW bound from SE
+      fnm[7] = f[idx(N,n,m) + 5*Nall]; // SW bound from NE
+      fnm[8] = f[idx(N,n,m) + 6*Nall]; // SE bound from NW
+    }
+    
+    // macroscopic density
+    const dfloat rho = fnm[0]+fnm[1]+fnm[2]+fnm[3]+fnm[4]+fnm[5]+fnm[6]+fnm[7]+fnm[8];
+    
+    //    if(rho<1e-4){ printf("rho(%d,%d)=%g\n", n,m,rho); exit(-1); }
+    
+    // macroscopic momentum
+    const dfloat delta2 = 1e-8;
+    const dfloat Ux = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*c/sqrt(rho*rho+delta2);
+    const dfloat Uy = (fnm[2] - fnm[4] + fnm[5] + fnm[6] - fnm[7] - fnm[8])*c/sqrt(rho*rho+delta2);
+
+    // compute equilibrium distribution
+    dfloat feq[NSPECIES];
+    lbmEquilibrium(c, rho, Ux, Uy, feq);
+
+    // MRT stabilization
+    const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
+    const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
+
+    const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
+        
+    // post collision densities
+    fnm[0] -= tauinv*(fnm[0]-feq[0]) + (1.f-tauinv)*w0*g0*R*0.25f;
+    fnm[1] -= tauinv*(fnm[1]-feq[1]) + (1.f-tauinv)*w1*g1*R*0.25f;
+    fnm[2] -= tauinv*(fnm[2]-feq[2]) + (1.f-tauinv)*w2*g2*R*0.25f;
+    fnm[3] -= tauinv*(fnm[3]-feq[3]) + (1.f-tauinv)*w3*g3*R*0.25f;
+    fnm[4] -= tauinv*(fnm[4]-feq[4]) + (1.f-tauinv)*w4*g4*R*0.25f;
+    fnm[5] -= tauinv*(fnm[5]-feq[5]) + (1.f-tauinv)*w5*g5*R*0.25f;
+    fnm[6] -= tauinv*(fnm[6]-feq[6]) + (1.f-tauinv)*w6*g6*R*0.25f;
+    fnm[7] -= tauinv*(fnm[7]-feq[7]) + (1.f-tauinv)*w7*g7*R*0.25f;
+    fnm[8] -= tauinv*(fnm[8]-feq[8]) + (1.f-tauinv)*w8*g8*R*0.25f;
+      
+    // store new densities
+    const int base = idx(N,n,m);
+    if(tx>=NHALO && tx<TX-NHALO && ty>=NHALO && ty<TY-NHALO){
+      fnew[base+0*Nall] = fnm[0];
+      fnew[base+1*Nall] = fnm[1];
+      fnew[base+2*Nall] = fnm[2];
+      fnew[base+3*Nall] = fnm[3];
+      fnew[base+4*Nall] = fnm[4];
+      fnew[base+5*Nall] = fnm[5];
+      fnew[base+6*Nall] = fnm[6];
+      fnew[base+7*Nall] = fnm[7];
+      fnew[base+8*Nall] = fnm[8];
+    }
+  }
+  
+}
+
+
+
+
+__global__ void lbmUpdateV2(const int N,                  // number of nodes in x
+			    const int M,                  // number of nodes in y
+			    const dfloat c,                // speed of sound
+			    const dfloat * __restrict__ tau,           // relaxation rate
+			    const int    * __restrict__ nodeType,      // (N+2) x (M+2) node types 
+			    const dfloat * __restrict__ f,             // (N+2) x (M+2) x 9 fields before streaming and collisions
+			    dfloat * __restrict__ fnew){               // (N+2) x (M+2) x 9 fields after streaming and collisions
+
+  __shared__ dfloat s_f[9][TY][TX];
+  
+  // number of nodes in whole array including halo
+  int Nall = (N+2)*(M+2);
+  int tx = threadIdx.x;
+  int ty = threadIdx.y;
+  
+  // loop over all non-halo nodes in lattice
+  int n = -(NHALO) + 1 + tx + blockIdx.x*(TX-2*NHALO);
+  int m = -(NHALO) + 1 + ty + blockIdx.y*(TY-2*NHALO);
+
+  if(m>=0 && m<M+2 && n>=0 && n<=N+1){
+    const int id = idx(N,n,m);
+    for(int fld=0;fld<9;++fld){
+      s_f[fld][ty][tx] = f[id + fld*Nall];     
+    }
+  }
+
+  __syncthreads();
+  
+  if(m>=1 && m<M+1 && n>=1 && n<=N+1){
+    if(tx>0 && tx<TX-1 && ty>0 && ty<TY-1){
+      // physics paramaters
+      dfloat tauinv = 1.f/tau[idx(N,n,m)];
+      
+      // discover type of node (WALL or FLUID)
+      const int nt = nodeType[idx(N,n,m)];
+      dfloat fnm[NSPECIES];
+      
+      // OUTFLOW
+      if(n==N+1){
+	fnm[0]  = s_f[0][ty][tx]     ; // stationary 
+	fnm[1]  = s_f[1][ty][tx-1]   ; // E bound from W
+	fnm[2]  = s_f[2][ty-1][tx]   ; // N bound from S
+	fnm[3]  = s_f[3][ty][tx]     ; // W bound from E
+	fnm[4]  = s_f[4][ty+1][tx]   ; // S bound from N
+	fnm[5]  = s_f[5][ty-1][tx-1] ; // NE bound from SW
+	fnm[6]  = s_f[6][ty-1][tx]   ; // NW bound from SE
+	fnm[7]  = s_f[7][ty+1][tx]   ; // SW bound from NE
+	fnm[8]  = s_f[8][ty+1][tx-1] ; // SE bound from NW      
+      }
+      else if(nt==FLUID){
+	fnm[0]  = s_f[0][ty][tx]     ; // stationary 
+	fnm[1]  = s_f[1][ty][tx-1]   ; // E bound from W
+	fnm[2]  = s_f[2][ty-1][tx]   ; // N bound from S
+	fnm[3]  = s_f[3][ty][tx+1]   ; // W bound from E
+	fnm[4]  = s_f[4][ty+1][tx]   ; // S bound from N
+	fnm[5]  = s_f[5][ty-1][tx-1] ; // NE bound from SW
+	fnm[6]  = s_f[6][ty-1][tx+1] ; // NW bound from SE
+	fnm[7]  = s_f[7][ty+1][tx+1] ; // SW bound from NE
+	fnm[8]  = s_f[8][ty+1][tx-1] ; // SE bound from NW
+      }
+      else{
+	// WALL reflects particles
+	fnm[0]  = s_f[0][ty][tx]; // stationary 
+	fnm[1]  = s_f[3][ty][tx]; // E bound from W
+	fnm[2]  = s_f[4][ty][tx]; // N bound from S
+	fnm[3]  = s_f[1][ty][tx]; // W bound from E
+	fnm[4]  = s_f[2][ty][tx]; // S bound from N
+	fnm[5]  = s_f[7][ty][tx]; // NE bound from SW
+	fnm[6]  = s_f[8][ty][tx]; // NW bound from SE
+	fnm[7]  = s_f[5][ty][tx]; // SW bound from NE
+	fnm[8]  = s_f[6][ty][tx]; // SE bound from NW
+      }
+      
+      // macroscopic density
+      const dfloat rho = fnm[0]+fnm[1]+fnm[2]+fnm[3]+fnm[4]+fnm[5]+fnm[6]+fnm[7]+fnm[8];
+      
+      //    if(rho<1e-4){ printf("rho(%d,%d)=%g\n", n,m,rho); exit(-1); }
+      
+      // macroscopic momentum
+      const dfloat delta2 = 1e-8;
+      const dfloat Ux = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*c/sqrt(rho*rho+delta2);
+      const dfloat Uy = (fnm[2] - fnm[4] + fnm[5] + fnm[6] - fnm[7] - fnm[8])*c/sqrt(rho*rho+delta2);
+      
+      // compute equilibrium distribution
+      dfloat feq[NSPECIES];
+      lbmEquilibrium(c, rho, Ux, Uy, feq);
+      
+      // MRT stabilization
+      const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
+      const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
+      
+      const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
+      
+      // post collision densities
+      fnm[0] -= tauinv*(fnm[0]-feq[0]) + (1.f-tauinv)*w0*g0*R*0.25f;
+      fnm[1] -= tauinv*(fnm[1]-feq[1]) + (1.f-tauinv)*w1*g1*R*0.25f;
+      fnm[2] -= tauinv*(fnm[2]-feq[2]) + (1.f-tauinv)*w2*g2*R*0.25f;
+      fnm[3] -= tauinv*(fnm[3]-feq[3]) + (1.f-tauinv)*w3*g3*R*0.25f;
+      fnm[4] -= tauinv*(fnm[4]-feq[4]) + (1.f-tauinv)*w4*g4*R*0.25f;
+      fnm[5] -= tauinv*(fnm[5]-feq[5]) + (1.f-tauinv)*w5*g5*R*0.25f;
+      fnm[6] -= tauinv*(fnm[6]-feq[6]) + (1.f-tauinv)*w6*g6*R*0.25f;
+      fnm[7] -= tauinv*(fnm[7]-feq[7]) + (1.f-tauinv)*w7*g7*R*0.25f;
+      fnm[8] -= tauinv*(fnm[8]-feq[8]) + (1.f-tauinv)*w8*g8*R*0.25f;
+      
+      // store new densities
+      const int base = idx(N,n,m);
+      if(tx>=NHALO && tx<TX-NHALO && ty>=NHALO && ty<TY-NHALO){
+	fnew[base+0*Nall] = fnm[0];
+	fnew[base+1*Nall] = fnm[1];
+	fnew[base+2*Nall] = fnm[2];
+	fnew[base+3*Nall] = fnm[3];
+	fnew[base+4*Nall] = fnm[4];
+	fnew[base+5*Nall] = fnm[5];
+	fnew[base+6*Nall] = fnm[6];
+	fnew[base+7*Nall] = fnm[7];
+	fnew[base+8*Nall] = fnm[8];
+      }
+    }
+  }
+  
+}
+
+__global__ void lbmUpdateV3(const int N,                  // number of nodes in x
+			    const int M,                  // number of nodes in y
+			    const dfloat c,                // speed of sound
+			    const dfloat * __restrict__ tau,           // relaxation rate
+			    const int    * __restrict__ nodeType,      // (N+2) x (M+2) node types 
+			    const dfloat * __restrict__ f,             // (N+2) x (M+2) x 9 fields before streaming and collisions
+			    dfloat * __restrict__ fnew){               // (N+2) x (M+2) x 9 fields after streaming and collisions
+
+  __shared__ dfloat s_f[9][TY][TX+1];
+  
+  // number of nodes in whole array including halo
+  int Nall = (N+2)*(M+2);
+  int tx = threadIdx.x;
+  int ty = threadIdx.y;
+  
+  // loop over all non-halo nodes in lattice
+  int n = -(NHALO) + 1 + tx + blockIdx.x*(TX-2*NHALO);
+  int m = -(NHALO) + 1 + ty + blockIdx.y*(TY-2*NHALO);
+
+  if(m>=0 && m<M+2 && n>=0 && n<=N+1){
+    const int id = idx(N,n,m);
+    for(int fld=0;fld<9;++fld){
+      s_f[fld][ty][tx] = f[id + fld*Nall];     
+    }
+  }
+
+  dfloat tauinv = 1;
+  int nt = 0;
+  
+  if(m>=1 && m<M+1 && n>=1 && n<=N+1){
+    if(tx>0 && tx<TX-1 && ty>0 && ty<TY-1){
+      // physics paramaters
+      tauinv = 1.f/tau[idx(N,n,m)];
+      
+      // discover type of node (WALL or FLUID)
+      nt = nodeType[idx(N,n,m)];
+    }
+  }
+
+  dfloat fnm[NSPECIES];
+  
+  for(int step=0;step<NSUBSTEPS;++step){
+
+    __syncthreads(); 
+    
+    if(m>=1 && m<M+1 && n>=1 && n<=N+1){
+      if(tx>0 && tx<TX-1 && ty>0 && ty<TY-1){
+	
+	// OUTFLOW
+	if(n==N+1){
+	  fnm[0]  = s_f[0][ty][tx]     ; // stationary 
+	  fnm[1]  = s_f[1][ty][tx-1]   ; // E bound from W
+	  fnm[2]  = s_f[2][ty-1][tx]   ; // N bound from S
+	  fnm[3]  = s_f[3][ty][tx]     ; // W bound from E
+	  fnm[4]  = s_f[4][ty+1][tx]   ; // S bound from N
+	  fnm[5]  = s_f[5][ty-1][tx-1] ; // NE bound from SW
+	  fnm[6]  = s_f[6][ty-1][tx]   ; // NW bound from SE
+	  fnm[7]  = s_f[7][ty+1][tx]   ; // SW bound from NE
+	  fnm[8]  = s_f[8][ty+1][tx-1] ; // SE bound from NW      
+	}
+	else if(nt==FLUID){
+	  fnm[0]  = s_f[0][ty][tx]     ; // stationary 
+	  fnm[1]  = s_f[1][ty][tx-1]   ; // E bound from W
+	  fnm[2]  = s_f[2][ty-1][tx]   ; // N bound from S
+	  fnm[3]  = s_f[3][ty][tx+1]   ; // W bound from E
+	  fnm[4]  = s_f[4][ty+1][tx]   ; // S bound from N
+	  fnm[5]  = s_f[5][ty-1][tx-1] ; // NE bound from SW
+	  fnm[6]  = s_f[6][ty-1][tx+1] ; // NW bound from SE
+	  fnm[7]  = s_f[7][ty+1][tx+1] ; // SW bound from NE
+	  fnm[8]  = s_f[8][ty+1][tx-1] ; // SE bound from NW
+	}
+	else{
+	  // WALL reflects particles
+	  fnm[0]  = s_f[0][ty][tx]; // stationary 
+	  fnm[1]  = s_f[3][ty][tx]; // E bound from W
+	  fnm[2]  = s_f[4][ty][tx]; // N bound from S
+	  fnm[3]  = s_f[1][ty][tx]; // W bound from E
+	  fnm[4]  = s_f[2][ty][tx]; // S bound from N
+	  fnm[5]  = s_f[7][ty][tx]; // NE bound from SW
+	  fnm[6]  = s_f[8][ty][tx]; // NW bound from SE
+	  fnm[7]  = s_f[5][ty][tx]; // SW bound from NE
+	  fnm[8]  = s_f[6][ty][tx]; // SE bound from NW
+	}
+	
+	// macroscopic density
+	const dfloat rho = fnm[0]+fnm[1]+fnm[2]+fnm[3]+fnm[4]+fnm[5]+fnm[6]+fnm[7]+fnm[8];
+	
+	//    if(rho<1e-4){ printf("rho(%d,%d)=%g\n", n,m,rho); exit(-1); }
+      
+	// macroscopic momentum
+	const dfloat delta2 = 1e-8;
+	const dfloat Ux = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*c/sqrt(rho*rho+delta2);
+	const dfloat Uy = (fnm[2] - fnm[4] + fnm[5] + fnm[6] - fnm[7] - fnm[8])*c/sqrt(rho*rho+delta2);
+	
+	// compute equilibrium distribution
+	dfloat feq[NSPECIES];
+	lbmEquilibrium(c, rho, Ux, Uy, feq);
+	
+	// MRT stabilization
+	const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
+	const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
+	
+	const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
+	
+	// post collision densities
+	fnm[0] -= tauinv*(fnm[0]-feq[0]) + (1.f-tauinv)*w0*g0*R*0.25f;
+	fnm[1] -= tauinv*(fnm[1]-feq[1]) + (1.f-tauinv)*w1*g1*R*0.25f;
+	fnm[2] -= tauinv*(fnm[2]-feq[2]) + (1.f-tauinv)*w2*g2*R*0.25f;
+	fnm[3] -= tauinv*(fnm[3]-feq[3]) + (1.f-tauinv)*w3*g3*R*0.25f;
+	fnm[4] -= tauinv*(fnm[4]-feq[4]) + (1.f-tauinv)*w4*g4*R*0.25f;
+	fnm[5] -= tauinv*(fnm[5]-feq[5]) + (1.f-tauinv)*w5*g5*R*0.25f;
+	fnm[6] -= tauinv*(fnm[6]-feq[6]) + (1.f-tauinv)*w6*g6*R*0.25f;
+	fnm[7] -= tauinv*(fnm[7]-feq[7]) + (1.f-tauinv)*w7*g7*R*0.25f;
+	fnm[8] -= tauinv*(fnm[8]-feq[8]) + (1.f-tauinv)*w8*g8*R*0.25f;
+
+      }
+    }
+  
+    __syncthreads();
+    
+    if(m>=1 && m<M+1 && n>=1 && n<=N+1){
+      if(tx>0 && tx<TX-1 && ty>0 && ty<TY-1){
+	
+	// store new densities
+	const int base = idx(N,n,m);
+	if(step==NSUBSTEPS-1){
+	  if(tx>=NHALO && tx<TX-NHALO && ty>=NHALO && ty<TY-NHALO){
+	    fnew[base+0*Nall] = fnm[0];
+	    fnew[base+1*Nall] = fnm[1];
+	    fnew[base+2*Nall] = fnm[2];
+	    fnew[base+3*Nall] = fnm[3];
+	    fnew[base+4*Nall] = fnm[4];
+	    fnew[base+5*Nall] = fnm[5];
+	    fnew[base+6*Nall] = fnm[6];
+	    fnew[base+7*Nall] = fnm[7];
+	    fnew[base+8*Nall] = fnm[8];
+	  }
+	}else{
+	  for(int fld=0;fld<9;++fld){
+	    s_f[fld][ty][tx] = fnm[fld];
+	  }
+	}
+      }
+    }
+  }
+}
+
+
 
 void lbmCheck(int N, int M, dfloat *f){
 
@@ -396,7 +788,7 @@ int main(int argc, char **argv){
   dfloat dx = .01;    // lattice node spacings 
   dfloat dt = dx*.1; // time step (also determines Mach number)
   dfloat c  = dx/dt; // speed of sound
-  dfloat tau = .6; // relaxation rate
+  dfloat tau = .58; // relaxation rate
   dfloat Reynolds = 2./((tau-.5)*c*c*dt/3.);
 
   printf("Reynolds number %g\n", Reynolds);
@@ -413,8 +805,8 @@ int main(int argc, char **argv){
   // set tau based on n index
   dfloat xo = .95;
   int n,m;
-  for(m=0;m<=M+1;++m){
-    for(n=0;n<=N+1;++n){
+  for(m=0;m<M+2;++m){
+    for(n=0;n<N+2;++n){
       dfloat x = ((double)n)/N;
       dfloat taunm = tau*(1 + 4*(1+tanh(20*(x-xo))));
       h_tau[idx(N,n,m)] = taunm;
@@ -434,29 +826,67 @@ int main(int argc, char **argv){
   cudaMemcpy(c_fnew, h_fnew, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyHostToDevice);
   cudaMemcpy(c_nodeType, nodeType, (N+2)*(M+2)*sizeof(int), cudaMemcpyHostToDevice);
   cudaMemcpy(c_tau,  h_tau, (N+2)*(M+2)*sizeof(dfloat), cudaMemcpyHostToDevice);
+
+  cudaEvent_t tic, toc;
+  cudaEventCreate(&tic);
+  cudaEventCreate(&toc);
   
   int Nsteps = 480000/2, tstep = 0, iostep = 100;
-
+  int version = 3;
+  int nsubs = (version==3) ? NSUBSTEPS:1;
   // time step
-  for(tstep=0;tstep<Nsteps;++tstep){
+  for(tstep=0;tstep<(Nsteps+nsubs-1)/nsubs;++tstep){
 
+    if(!((nsubs*tstep)%iostep)){ 
+      cudaEventRecord(tic);
+    }
+    
     // perform two updates
+#if 0
     dim3 T(TX,TY,1);
     dim3 B( (N+1+TX-1)/TX, (M+1+TY-1)/TY, 1);
-    
-    lbmUpdate <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_f, c_fnew);
-    lbmUpdate <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_fnew, c_f);
 
-    if(!(tstep%iostep)){ // output an image every iostep
-      printf("tstep = %d\n", tstep);
+    lbmUpdateV0 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_f, c_fnew);
+    lbmUpdateV0 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_fnew, c_f);
+#endif
+
+#if 0
+    dim3 T(TX,TY,1);
+    dim3 B( (N+1+2*NHALO + (TX-2*NHALO)-1)/(TX-2*NHALO), (M+1+2*NHALO + (TY-2*NHALO)-1)/(TY-2*NHALO), 1);
+
+    lbmUpdateV2 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_f, c_fnew);
+    lbmUpdateV2 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_fnew, c_f);k    
+#endif
+
+#if 1
+    dim3 T(TX,TY,1);
+    dim3 B( (N+1+2*NHALO + (TX-2*NHALO)-1)/(TX-2*NHALO), (M+1+2*NHALO + (TY-2*NHALO)-1)/(TY-2*NHALO), 1);
+
+    lbmUpdateV3 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_f, c_fnew);
+    lbmUpdateV3 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_fnew, c_f);
+    nsubs = NSUBSTEPS;
+#endif
+
+    
+    if(!((nsubs*tstep)%iostep)){ // output an image every iostep
+      cudaEventRecord(toc);
+      
+      
       char fname[BUFSIZ];
-      sprintf(fname, "bah%06d.png", tstep/iostep);
+      sprintf(fname, "bah%06d.png", (nsubs*tstep)/iostep);
 
       cudaMemcpy(h_f, c_f, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyDeviceToHost);
 
       lbmOutput(fname, nodeType, rgb, alpha, c, dx, N, M, h_f);
 
       lbmCheck(N,M,h_f);
+
+      float elapsed = 0;
+      cudaEventElapsedTime(&elapsed, tic, toc);
+      elapsed /= 1000.f;
+
+      double gnups = N*M*(2*nsubs/elapsed)/1.e9;
+      printf("tstep = %d, GNODES/s = %g\n", tstep*nsubs, gnups);
     }
   }
 
