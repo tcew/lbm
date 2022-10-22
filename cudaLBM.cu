@@ -21,8 +21,10 @@ extern "C"
 #define NSUBSTEPS (NHALO)
 #endif
 
-#define TX 32
-#define TY 32
+#ifndef TX
+#define TX 24
+#define TY 24
+#endif
 
 #include "cuda.h"
 
@@ -192,10 +194,50 @@ void lbmOutput(const char *fname,
 
 
 // weights used to compute equilibrium distribution (post collision)
+
+#if 0
 const dfloat w0 = 4.f/9.f, w1 = 1.f/9.f, w2 = 1.f/9.f, w3 =  1.f/9.f;
 const dfloat w4 = 1.f/9.f, w5 = 1.f/36.f, w6 = 1.f/36.f, w7 = 1.f/36.f, w8 = 1.f/36.f;
+#else
+#define w0 (4.f/9.f)
+#define w1 (1.f/9.f)
+#define w2 (1.f/9.f)
+#define w3 (1.f/9.f)
+#define w4 (1.f/9.f)
+#define w5 (1.f/36.f)
+#define w6 (1.f/36.f)
+#define w7 (1.f/36.f)
+#define w8 (1.f/36.f)
+#endif
 
-__host__ __device__ void lbmEquilibrium(const dfloat c,
+#if 0
+const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
+const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
+#else
+#define g0 (1.f)
+#define g1 (-2.f)
+#define g2 (-2.f)
+#define g3 (-2.f)
+#define g4 (-2.f)
+#define g5 (4.f)
+#define g6 (4.f)
+#define g7 (4.f)
+#define g8 (4.f)
+#endif
+
+#define wg0 (4.f/9.f)
+#define wg1 (-2.f/9.f)
+#define wg2 (-2.f/9.f)
+#define wg3 (-2.f/9.f)
+#define wg4 (-2.f/9.f)
+#define wg5 (1.f/9.f)
+#define wg6 (1.f/9.f)
+#define wg7 (1.f/9.f)
+#define wg8 (1.f/9.f)
+
+
+
+__host__ __device__ void lbmEquilibrium(const dfloat invc,
 					const dfloat rho,
 					const dfloat Ux, 
 					const dfloat Uy,
@@ -205,25 +247,27 @@ __host__ __device__ void lbmEquilibrium(const dfloat c,
   const dfloat U2 = Ux*Ux+Uy*Uy;
   
   const dfloat v0 = 0;
-  const dfloat v1 = +Ux/c;
-  const dfloat v2 = +Uy/c;
-  const dfloat v3 = -Ux/c;
-  const dfloat v4 = -Uy/c;
-  const dfloat v5 =  (+Ux+Uy)/c;
-  const dfloat v6 =  (-Ux+Uy)/c;
-  const dfloat v7 =  (-Ux-Uy)/c;
-  const dfloat v8 =  (+Ux-Uy)/c;
+  const dfloat v1 = +Ux*invc;
+  const dfloat v2 = +Uy*invc;
+  const dfloat v3 = -Ux*invc;
+  const dfloat v4 = -Uy*invc;
+  const dfloat v5 =  (+Ux+Uy)*invc;
+  const dfloat v6 =  (-Ux+Uy)*invc;
+  const dfloat v7 =  (-Ux-Uy)*invc;
+  const dfloat v8 =  (+Ux-Uy)*invc;
   
   // compute LBM post-collisional 
-  feq[0] = rho*w0*(1.f + 3.f*v0 + 4.5f*v0*v0 - 1.5f*U2/(c*c));
-  feq[1] = rho*w1*(1.f + 3.f*v1 + 4.5f*v1*v1 - 1.5f*U2/(c*c));
-  feq[2] = rho*w2*(1.f + 3.f*v2 + 4.5f*v2*v2 - 1.5f*U2/(c*c));
-  feq[3] = rho*w3*(1.f + 3.f*v3 + 4.5f*v3*v3 - 1.5f*U2/(c*c));
-  feq[4] = rho*w4*(1.f + 3.f*v4 + 4.5f*v4*v4 - 1.5f*U2/(c*c));
-  feq[5] = rho*w5*(1.f + 3.f*v5 + 4.5f*v5*v5 - 1.5f*U2/(c*c));
-  feq[6] = rho*w6*(1.f + 3.f*v6 + 4.5f*v6*v6 - 1.5f*U2/(c*c));
-  feq[7] = rho*w7*(1.f + 3.f*v7 + 4.5f*v7*v7 - 1.5f*U2/(c*c));
-  feq[8] = rho*w8*(1.f + 3.f*v8 + 4.5f*v8*v8 - 1.5f*U2/(c*c));
+  const dfloat shift = -1.5f*U2*invc*invc;
+  feq[0] = rho*w0*(1.f + 3.f*v0 + 4.5f*v0*v0+ shift);
+  feq[1] = rho*w1*(1.f + 3.f*v1 + 4.5f*v1*v1+ shift);
+  feq[2] = rho*w2*(1.f + 3.f*v2 + 4.5f*v2*v2+ shift);
+  feq[3] = rho*w3*(1.f + 3.f*v3 + 4.5f*v3*v3+ shift);
+  feq[4] = rho*w4*(1.f + 3.f*v4 + 4.5f*v4*v4+ shift);
+  feq[5] = rho*w5*(1.f + 3.f*v5 + 4.5f*v5*v5+ shift);
+  feq[6] = rho*w6*(1.f + 3.f*v6 + 4.5f*v6*v6+ shift);
+  feq[7] = rho*w7*(1.f + 3.f*v7 + 4.5f*v7*v7+ shift);
+  feq[8] = rho*w8*(1.f + 3.f*v8 + 4.5f*v8*v8+ shift);
+		   
 }
 
 
@@ -243,6 +287,8 @@ __global__ void lbmUpdateV0(const int N,                  // number of nodes in 
   int n = 1 + threadIdx.x + blockIdx.x*TX;
   int m = 1 + threadIdx.y + blockIdx.y*TY;
 
+  dfloat invc = 1.f/c;
+  
   if(m<M+1 && n<=N+1){
 
     // physics paramaters
@@ -300,11 +346,9 @@ __global__ void lbmUpdateV0(const int N,                  // number of nodes in 
 
     // compute equilibrium distribution
     dfloat feq[NSPECIES];
-    lbmEquilibrium(c, rho, Ux, Uy, feq);
+    lbmEquilibrium(invc, rho, Ux, Uy, feq);
 
     // MRT stabilization
-    const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
-    const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
 
     const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
         
@@ -353,6 +397,8 @@ __global__ void lbmUpdateV1(const int N,                  // number of nodes in 
   int n = -(NHALO) + 1 + tx + blockIdx.x*(TX-2*NHALO);
   int m = -(NHALO) + 1 + ty + blockIdx.y*(TY-2*NHALO);
 
+  dfloat invc = 1.f/c;
+  
   if(m>=1 && m<M+1 && n>=1 && n<=N+1){
 
     // physics paramaters
@@ -410,11 +456,9 @@ __global__ void lbmUpdateV1(const int N,                  // number of nodes in 
 
     // compute equilibrium distribution
     dfloat feq[NSPECIES];
-    lbmEquilibrium(c, rho, Ux, Uy, feq);
+    lbmEquilibrium(invc, rho, Ux, Uy, feq);
 
     // MRT stabilization
-    const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
-    const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
 
     const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
         
@@ -475,6 +519,8 @@ __global__ void lbmUpdateV2(const int N,                  // number of nodes in 
     }
   }
 
+  dfloat invc = 1.f/c;
+  
   __syncthreads();
   
   if(m>=1 && m<M+1 && n>=1 && n<=N+1){
@@ -534,12 +580,9 @@ __global__ void lbmUpdateV2(const int N,                  // number of nodes in 
       
       // compute equilibrium distribution
       dfloat feq[NSPECIES];
-      lbmEquilibrium(c, rho, Ux, Uy, feq);
+      lbmEquilibrium(invc, rho, Ux, Uy, feq);
       
       // MRT stabilization
-      const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
-      const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
-      
       const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
       
       // post collision densities
@@ -574,24 +617,27 @@ __global__ void lbmUpdateV2(const int N,                  // number of nodes in 
 __global__ void lbmUpdateV3(const int N,                  // number of nodes in x
 			    const int M,                  // number of nodes in y
 			    const dfloat c,                // speed of sound
-			    const dfloat * __restrict__ tau,           // relaxation rate
+			    const dfloat * __restrict__ tauInv,           // relaxation rate
 			    const int    * __restrict__ nodeType,      // (N+2) x (M+2) node types 
 			    const dfloat * __restrict__ f,             // (N+2) x (M+2) x 9 fields before streaming and collisions
 			    dfloat * __restrict__ fnew){               // (N+2) x (M+2) x 9 fields after streaming and collisions
 
-  __shared__ dfloat s_f[9][TY][TX+1];
+  __shared__ dfloat s_f[9][TY][TX];
   
   // number of nodes in whole array including halo
-  int Nall = (N+2)*(M+2);
-  int tx = threadIdx.x;
-  int ty = threadIdx.y;
+  const int Nall = (N+2)*(M+2);
+  const int tx = threadIdx.x;
+  const int ty = threadIdx.y;
   
   // loop over all non-halo nodes in lattice
-  int n = -(NHALO) + 1 + tx + blockIdx.x*(TX-2*NHALO);
-  int m = -(NHALO) + 1 + ty + blockIdx.y*(TY-2*NHALO);
+  const int n = -(NHALO) + 1 + tx + blockIdx.x*(TX-2*NHALO);
+  const int m = -(NHALO) + 1 + ty + blockIdx.y*(TY-2*NHALO);
 
+  const dfloat invc = 1.f/c;
+  
   if(m>=0 && m<M+2 && n>=0 && n<=N+1){
     const int id = idx(N,n,m);
+
     for(int fld=0;fld<9;++fld){
       s_f[fld][ty][tx] = f[id + fld*Nall];     
     }
@@ -603,7 +649,7 @@ __global__ void lbmUpdateV3(const int N,                  // number of nodes in 
   if(m>=1 && m<M+1 && n>=1 && n<=N+1){
     if(tx>0 && tx<TX-1 && ty>0 && ty<TY-1){
       // physics paramaters
-      tauinv = 1.f/tau[idx(N,n,m)];
+      tauinv = tauInv[idx(N,n,m)];
       
       // discover type of node (WALL or FLUID)
       nt = nodeType[idx(N,n,m)];
@@ -611,109 +657,114 @@ __global__ void lbmUpdateV3(const int N,                  // number of nodes in 
   }
 
   dfloat fnm[NSPECIES];
-  
-  for(int step=0;step<NSUBSTEPS;++step){
+  dfloat feq[NSPECIES];
 
+  const int test = (m>=1 && m<M+1 && n>=1 && n<=N+1) && (tx>0 && tx<TX-1 && ty>0 && ty<TY-1);
+  
+#pragma unroll 4
+  for(int step=0;step<NSUBSTEPS;++step){
+    
     __syncthreads(); 
     
-    if(m>=1 && m<M+1 && n>=1 && n<=N+1){
-      if(tx>0 && tx<TX-1 && ty>0 && ty<TY-1){
-	
-	// OUTFLOW
-	if(n==N+1){
-	  fnm[0]  = s_f[0][ty][tx]     ; // stationary 
-	  fnm[1]  = s_f[1][ty][tx-1]   ; // E bound from W
-	  fnm[2]  = s_f[2][ty-1][tx]   ; // N bound from S
-	  fnm[3]  = s_f[3][ty][tx]     ; // W bound from E
-	  fnm[4]  = s_f[4][ty+1][tx]   ; // S bound from N
-	  fnm[5]  = s_f[5][ty-1][tx-1] ; // NE bound from SW
-	  fnm[6]  = s_f[6][ty-1][tx]   ; // NW bound from SE
-	  fnm[7]  = s_f[7][ty+1][tx]   ; // SW bound from NE
-	  fnm[8]  = s_f[8][ty+1][tx-1] ; // SE bound from NW      
-	}
-	else if(nt==FLUID){
-	  fnm[0]  = s_f[0][ty][tx]     ; // stationary 
-	  fnm[1]  = s_f[1][ty][tx-1]   ; // E bound from W
-	  fnm[2]  = s_f[2][ty-1][tx]   ; // N bound from S
-	  fnm[3]  = s_f[3][ty][tx+1]   ; // W bound from E
-	  fnm[4]  = s_f[4][ty+1][tx]   ; // S bound from N
-	  fnm[5]  = s_f[5][ty-1][tx-1] ; // NE bound from SW
-	  fnm[6]  = s_f[6][ty-1][tx+1] ; // NW bound from SE
-	  fnm[7]  = s_f[7][ty+1][tx+1] ; // SW bound from NE
-	  fnm[8]  = s_f[8][ty+1][tx-1] ; // SE bound from NW
-	}
-	else{
-	  // WALL reflects particles
-	  fnm[0]  = s_f[0][ty][tx]; // stationary 
-	  fnm[1]  = s_f[3][ty][tx]; // E bound from W
-	  fnm[2]  = s_f[4][ty][tx]; // N bound from S
-	  fnm[3]  = s_f[1][ty][tx]; // W bound from E
-	  fnm[4]  = s_f[2][ty][tx]; // S bound from N
-	  fnm[5]  = s_f[7][ty][tx]; // NE bound from SW
-	  fnm[6]  = s_f[8][ty][tx]; // NW bound from SE
-	  fnm[7]  = s_f[5][ty][tx]; // SW bound from NE
-	  fnm[8]  = s_f[6][ty][tx]; // SE bound from NW
-	}
-	
-	// macroscopic density
-	const dfloat rho = fnm[0]+fnm[1]+fnm[2]+fnm[3]+fnm[4]+fnm[5]+fnm[6]+fnm[7]+fnm[8];
-	
-	//    if(rho<1e-4){ printf("rho(%d,%d)=%g\n", n,m,rho); exit(-1); }
-      
-	// macroscopic momentum
-	const dfloat delta2 = 1e-8;
-	const dfloat Ux = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*c/sqrt(rho*rho+delta2);
-	const dfloat Uy = (fnm[2] - fnm[4] + fnm[5] + fnm[6] - fnm[7] - fnm[8])*c/sqrt(rho*rho+delta2);
-	
-	// compute equilibrium distribution
-	dfloat feq[NSPECIES];
-	lbmEquilibrium(c, rho, Ux, Uy, feq);
-	
-	// MRT stabilization
-	const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
-	const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
-	
-	const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
-	
-	// post collision densities
-	fnm[0] -= tauinv*(fnm[0]-feq[0]) + (1.f-tauinv)*w0*g0*R*0.25f;
-	fnm[1] -= tauinv*(fnm[1]-feq[1]) + (1.f-tauinv)*w1*g1*R*0.25f;
-	fnm[2] -= tauinv*(fnm[2]-feq[2]) + (1.f-tauinv)*w2*g2*R*0.25f;
-	fnm[3] -= tauinv*(fnm[3]-feq[3]) + (1.f-tauinv)*w3*g3*R*0.25f;
-	fnm[4] -= tauinv*(fnm[4]-feq[4]) + (1.f-tauinv)*w4*g4*R*0.25f;
-	fnm[5] -= tauinv*(fnm[5]-feq[5]) + (1.f-tauinv)*w5*g5*R*0.25f;
-	fnm[6] -= tauinv*(fnm[6]-feq[6]) + (1.f-tauinv)*w6*g6*R*0.25f;
-	fnm[7] -= tauinv*(fnm[7]-feq[7]) + (1.f-tauinv)*w7*g7*R*0.25f;
-	fnm[8] -= tauinv*(fnm[8]-feq[8]) + (1.f-tauinv)*w8*g8*R*0.25f;
-
+    if(test){
+      // OUTFLOW
+      if(n==N+1){
+	fnm[0]  = s_f[0][ty][tx]     ; // stationary 
+	fnm[1]  = s_f[1][ty][tx-1]   ; // E bound from W
+	fnm[2]  = s_f[2][ty-1][tx]   ; // N bound from S
+	fnm[3]  = s_f[3][ty][tx]     ; // W bound from E
+	fnm[4]  = s_f[4][ty+1][tx]   ; // S bound from N
+	fnm[5]  = s_f[5][ty-1][tx-1] ; // NE bound from SW
+	fnm[6]  = s_f[6][ty-1][tx]   ; // NW bound from SE
+	fnm[7]  = s_f[7][ty+1][tx]   ; // SW bound from NE
+	fnm[8]  = s_f[8][ty+1][tx-1] ; // SE bound from NW      
       }
+      else if(nt==FLUID){
+	fnm[0]  = s_f[0][ty][tx]     ; // stationary 
+	fnm[1]  = s_f[1][ty][tx-1]   ; // E bound from W
+	fnm[2]  = s_f[2][ty-1][tx]   ; // N bound from S
+	fnm[3]  = s_f[3][ty][tx+1]   ; // W bound from E
+	fnm[4]  = s_f[4][ty+1][tx]   ; // S bound from N
+	fnm[5]  = s_f[5][ty-1][tx-1] ; // NE bound from SW
+	fnm[6]  = s_f[6][ty-1][tx+1] ; // NW bound from SE
+	fnm[7]  = s_f[7][ty+1][tx+1] ; // SW bound from NE
+	fnm[8]  = s_f[8][ty+1][tx-1] ; // SE bound from NW
+      }
+      else{
+	// WALL reflects particles
+	fnm[0]  = s_f[0][ty][tx]; // stationary 
+	fnm[1]  = s_f[3][ty][tx]; // E bound from W
+	fnm[2]  = s_f[4][ty][tx]; // N bound from S
+	fnm[3]  = s_f[1][ty][tx]; // W bound from E
+	fnm[4]  = s_f[2][ty][tx]; // S bound from N
+	fnm[5]  = s_f[7][ty][tx]; // NE bound from SW
+	fnm[6]  = s_f[8][ty][tx]; // NW bound from SE
+	fnm[7]  = s_f[5][ty][tx]; // SW bound from NE
+	fnm[8]  = s_f[6][ty][tx]; // SE bound from NW
+      }
+	
+      // macroscopic density
+      const dfloat rho = fnm[0]+fnm[1]+fnm[2]+fnm[3]+fnm[4]+fnm[5]+fnm[6]+fnm[7]+fnm[8];
+
+      const dfloat delta2 = 1e-8;
+      const dfloat denom = c*rsqrt(rho*rho+delta2);
+
+      // macroscopic momentum
+      const dfloat Ux = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*denom;
+      const dfloat Uy = (fnm[2] - fnm[4] + fnm[5] + fnm[6] - fnm[7] - fnm[8])*denom;
+      
+      // compute equilibrium distribution
+      lbmEquilibrium(invc, rho, Ux, Uy, feq);
+	
+      // MRT stabilization
+      dfloat R = g0*fnm[0];
+      R += g1*fnm[1];
+      R += g2*fnm[2];
+      R += g3*fnm[3];
+      R += g4*fnm[4];
+      R += g5*fnm[5];
+      R += g6*fnm[6];
+      R += g7*fnm[7];
+      R += g8*fnm[8];
+	
+      // post collision densities
+      const dfloat fac = (1.f-tauinv)*R*0.25f;
+      fnm[0] -= tauinv*(fnm[0]-feq[0]) + fac*w0*g0;
+      fnm[1] -= tauinv*(fnm[1]-feq[1]) + fac*w1*g1;
+      fnm[2] -= tauinv*(fnm[2]-feq[2]) + fac*w2*g2;
+      fnm[3] -= tauinv*(fnm[3]-feq[3]) + fac*w3*g3;
+      fnm[4] -= tauinv*(fnm[4]-feq[4]) + fac*w4*g4;
+      fnm[5] -= tauinv*(fnm[5]-feq[5]) + fac*w5*g5;
+      fnm[6] -= tauinv*(fnm[6]-feq[6]) + fac*w6*g6;
+      fnm[7] -= tauinv*(fnm[7]-feq[7]) + fac*w7*g7;
+      fnm[8] -= tauinv*(fnm[8]-feq[8]) + fac*w8*g8;
+	
     }
-  
+    
     __syncthreads();
     
-    if(m>=1 && m<M+1 && n>=1 && n<=N+1){
-      if(tx>0 && tx<TX-1 && ty>0 && ty<TY-1){
-	
-	// store new densities
-	const int base = idx(N,n,m);
-	if(step==NSUBSTEPS-1){
-	  if(tx>=NHALO && tx<TX-NHALO && ty>=NHALO && ty<TY-NHALO){
-	    fnew[base+0*Nall] = fnm[0];
-	    fnew[base+1*Nall] = fnm[1];
-	    fnew[base+2*Nall] = fnm[2];
-	    fnew[base+3*Nall] = fnm[3];
-	    fnew[base+4*Nall] = fnm[4];
-	    fnew[base+5*Nall] = fnm[5];
-	    fnew[base+6*Nall] = fnm[6];
-	    fnew[base+7*Nall] = fnm[7];
-	    fnew[base+8*Nall] = fnm[8];
-	  }
-	}else{
-	  for(int fld=0;fld<9;++fld){
-	    s_f[fld][ty][tx] = fnm[fld];
-	  }
+    if(test){
+      if(step<NSUBSTEPS-1){
+	for(int fld=0;fld<9;++fld){
+	  s_f[fld][ty][tx] = fnm[fld];
 	}
       }
+    }
+  }
+  
+  if(m>=1 && m<M+1 && n>=1 && n<=N+1){
+    if(tx>=NHALO && tx<TX-NHALO && ty>=NHALO && ty<TY-NHALO){
+      // store new densities
+      const int base = idx(N,n,m);
+      fnew[base+0*Nall] = fnm[0];
+      fnew[base+1*Nall] = fnm[1];
+      fnew[base+2*Nall] = fnm[2];
+      fnew[base+3*Nall] = fnm[3];
+      fnew[base+4*Nall] = fnm[4];
+      fnew[base+5*Nall] = fnm[5];
+      fnew[base+6*Nall] = fnm[6];
+      fnew[base+7*Nall] = fnm[7];
+      fnew[base+8*Nall] = fnm[8];
     }
   }
 }
@@ -745,9 +796,10 @@ void lbmInitialConditions(dfloat c, int N, int M, int *nodeType, dfloat *f){
   dfloat rhoIC = 1.;
   dfloat UxIC = 1.;
   dfloat UyIC = 0.;
-
-  lbmEquilibrium(c, rhoIC,    0.,  0., feqWALL);
-  lbmEquilibrium(c, rhoIC, UxIC, UyIC, feqIC);
+  dfloat invc = 1./c;
+  
+  lbmEquilibrium(invc, rhoIC,    0.,  0., feqWALL);
+  lbmEquilibrium(invc, rhoIC, UxIC, UyIC, feqIC);
   
   for(m=0;m<=M+1;++m){
     for(n=0;n<=N+1;++n){
@@ -797,6 +849,7 @@ int main(int argc, char **argv){
   dfloat *h_f    = (dfloat*) calloc((N+2)*(M+2)*NSPECIES, sizeof(dfloat));
   dfloat *h_fnew = (dfloat*) calloc((N+2)*(M+2)*NSPECIES, sizeof(dfloat));
   dfloat *h_tau  = (dfloat*) calloc((N+2)*(M+2), sizeof(dfloat));
+  dfloat *h_tauInv  = (dfloat*) calloc((N+2)*(M+2), sizeof(dfloat));
   
   // set initial flow densities
   lbmInitialConditions(c, N, M, nodeType, h_f);
@@ -810,28 +863,32 @@ int main(int argc, char **argv){
       dfloat x = ((double)n)/N;
       dfloat taunm = tau*(1 + 4*(1+tanh(20*(x-xo))));
       h_tau[idx(N,n,m)] = taunm;
+      h_tauInv[idx(N,n,m)] = 1.f/taunm;
     }
   }
 
   // DEVICE storage
-  dfloat *c_f, *c_fnew, *c_tau;
+  dfloat *c_f, *c_fnew, *c_tau,*c_tauInv;
   int *c_nodeType;
   
   cudaMalloc(&c_f,    (N+2)*(M+2)*NSPECIES*sizeof(dfloat));
   cudaMalloc(&c_fnew, (N+2)*(M+2)*NSPECIES*sizeof(dfloat));
   cudaMalloc(&c_nodeType, (N+2)*(M+2)*sizeof(int));
   cudaMalloc(&c_tau,      (N+2)*(M+2)*sizeof(dfloat));
+  cudaMalloc(&c_tauInv,      (N+2)*(M+2)*sizeof(dfloat));
 
   cudaMemcpy(c_f,    h_f,    (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyHostToDevice);
   cudaMemcpy(c_fnew, h_fnew, (N+2)*(M+2)*NSPECIES*sizeof(dfloat), cudaMemcpyHostToDevice);
   cudaMemcpy(c_nodeType, nodeType, (N+2)*(M+2)*sizeof(int), cudaMemcpyHostToDevice);
   cudaMemcpy(c_tau,  h_tau, (N+2)*(M+2)*sizeof(dfloat), cudaMemcpyHostToDevice);
+  cudaMemcpy(c_tauInv,  h_tauInv, (N+2)*(M+2)*sizeof(dfloat), cudaMemcpyHostToDevice);
 
   cudaEvent_t tic, toc;
   cudaEventCreate(&tic);
   cudaEventCreate(&toc);
   
   int Nsteps = 480000/2, tstep = 0, iostep = 100;
+//  int Nsteps = 960/2, tstep = 0, iostep = 100;
   int version = 3;
   int nsubs = (version==3) ? NSUBSTEPS:1;
   // time step
@@ -842,30 +899,29 @@ int main(int argc, char **argv){
     }
     
     // perform two updates
-#if 0
-    dim3 T(TX,TY,1);
-    dim3 B( (N+1+TX-1)/TX, (M+1+TY-1)/TY, 1);
+    if(version==0){
+      dim3 T(TX,TY,1);
+      dim3 B( (N+1+TX-1)/TX, (M+1+TY-1)/TY, 1);
+      
+      lbmUpdateV0 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_f, c_fnew);
+      lbmUpdateV0 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_fnew, c_f);
+    }
 
-    lbmUpdateV0 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_f, c_fnew);
-    lbmUpdateV0 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_fnew, c_f);
-#endif
+    if(version==2){
+      dim3 T(TX,TY,1);
+      dim3 B( (N+1+2*NHALO + (TX-2*NHALO)-1)/(TX-2*NHALO), (M+1+2*NHALO + (TY-2*NHALO)-1)/(TY-2*NHALO), 1);
+      
+      lbmUpdateV2 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_f, c_fnew);
+      lbmUpdateV2 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_fnew, c_f);  
+    }
 
-#if 0
-    dim3 T(TX,TY,1);
-    dim3 B( (N+1+2*NHALO + (TX-2*NHALO)-1)/(TX-2*NHALO), (M+1+2*NHALO + (TY-2*NHALO)-1)/(TY-2*NHALO), 1);
-
-    lbmUpdateV2 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_f, c_fnew);
-    lbmUpdateV2 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_fnew, c_f);k    
-#endif
-
-#if 1
-    dim3 T(TX,TY,1);
-    dim3 B( (N+1+2*NHALO + (TX-2*NHALO)-1)/(TX-2*NHALO), (M+1+2*NHALO + (TY-2*NHALO)-1)/(TY-2*NHALO), 1);
-
-    lbmUpdateV3 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_f, c_fnew);
-    lbmUpdateV3 <<< B, T >>> (N, M, c, c_tau, c_nodeType, c_fnew, c_f);
-    nsubs = NSUBSTEPS;
-#endif
+    if(version==3){
+      dim3 T(TX,TY,1);
+      dim3 B( (N+1+2*NHALO + (TX-2*NHALO)-1)/(TX-2*NHALO), (M+1+2*NHALO + (TY-2*NHALO)-1)/(TY-2*NHALO), 1);
+      
+      lbmUpdateV3 <<< B, T >>> (N, M, c, c_tauInv, c_nodeType, c_f, c_fnew);
+      lbmUpdateV3 <<< B, T >>> (N, M, c, c_tauInv, c_nodeType, c_fnew, c_f);
+    }
 
     
     if(!((nsubs*tstep)%iostep)){ // output an image every iostep
