@@ -4,12 +4,16 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include "cuda.h"
+
+
 extern "C"
 {
 #include "png_util.h"
 }
 
 #define dfloat float
+// float
 
 #define FLUID 0
 #define WALL 1
@@ -22,14 +26,14 @@ extern "C"
 #endif
 
 #ifndef TX
-#define TX 24
-#define TY 24
+#define TX 32
+#define TY 29
 #endif
 
 #include "cuda.h"
 
 // loop up 1D array index from 2D node coordinates
-__host__ __device__ int idx(int N, int n, int m){
+__host__ __device__ __inline__ int idx(int N, int n, int m){
   return n + m*(N+2);
 }
 
@@ -95,7 +99,7 @@ void lbmInput(const char *imageFileName,
   *rgb = rgbPad;
   *alpha = alphaPad;
   
-  printf("wallCount = %d (%g percent of %d x %d nodes)\n", wallCount, 100.*((dfloat)wallCount/((Npad+2)*(Mpad+2))), Npad, Mpad);
+//  printf("wallCount = %d (%g percent of %d x %d nodes)\n", wallCount, 100.*((dfloat)wallCount/((Npad+2)*(Mpad+2))), Npad, Mpad);
   
   *outN = Npad;
   *outM = Mpad;
@@ -124,7 +128,7 @@ void lbmOutput(const char *fname,
       int base = idx(N, n, m);
       for(s=0;s<NSPECIES;++s)
 	fnm[s] = f[base+s*(N+2)*(M+2)];
-
+      
       const dfloat rho = fnm[0]+fnm[1]+fnm[2]+fnm[3]+fnm[4]+fnm[5]+fnm[6]+fnm[7]+fnm[8];
       // macroscopic momentum
       Ux[base] = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*c/rho;
@@ -146,6 +150,7 @@ void lbmOutput(const char *fname,
 	dfloat rho = 0;
 	for(s=0;s<NSPECIES;++s)
 	  rho += f[id+s*(N+2)*(M+2)];
+
 	rho = ((rho-plotMin)/(plotMax-plotMin)); // rescale
 
 	dfloat dUxdy = (Ux[idx(N,n,m+1)]-Ux[idx(N,n,m-1)])/(2.*dx);
@@ -237,37 +242,36 @@ const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
 
 
 
-__host__ __device__ void lbmEquilibrium(const dfloat invc,
-					const dfloat rho,
-					const dfloat Ux, 
-					const dfloat Uy,
-					dfloat *  feq){
+__host__ __device__ __inline__ void lbmEquilibrium(const dfloat invc,
+						   const dfloat rho,
+						   const dfloat Ux, 
+						   const dfloat Uy,
+						   dfloat *  feq){
 
   // resolve macroscopic velocity into lattice particle velocity directions
-  const dfloat U2 = Ux*Ux+Uy*Uy;
-  
-  const dfloat v0 = 0;
+//  const dfloat v0 = 0;
   const dfloat v1 = +Ux*invc;
   const dfloat v2 = +Uy*invc;
-  const dfloat v3 = -Ux*invc;
-  const dfloat v4 = -Uy*invc;
-  const dfloat v5 =  (+Ux+Uy)*invc;
-  const dfloat v6 =  (-Ux+Uy)*invc;
-  const dfloat v7 =  (-Ux-Uy)*invc;
-  const dfloat v8 =  (+Ux-Uy)*invc;
+  const dfloat v3 = -v1; // -Ux*invc;
+  const dfloat v4 = -v2; // -Uy*invc;
+  const dfloat v5 =  v1+v2;  // (+Ux+Uy)*invc;
+  const dfloat v6 =  -v1+v2; // (-Ux+Uy)*invc;
+  const dfloat v7 =  -v1-v2; // (-Ux-Uy)*invc;
+  const dfloat v8 =   v1-v2; //  (+Ux-Uy)*invc;
   
-  // compute LBM post-collisional 
-  const dfloat shift = -1.5f*U2*invc*invc;
-  feq[0] = rho*w0*(1.f + 3.f*v0 + 4.5f*v0*v0+ shift);
-  feq[1] = rho*w1*(1.f + 3.f*v1 + 4.5f*v1*v1+ shift);
-  feq[2] = rho*w2*(1.f + 3.f*v2 + 4.5f*v2*v2+ shift);
-  feq[3] = rho*w3*(1.f + 3.f*v3 + 4.5f*v3*v3+ shift);
-  feq[4] = rho*w4*(1.f + 3.f*v4 + 4.5f*v4*v4+ shift);
-  feq[5] = rho*w5*(1.f + 3.f*v5 + 4.5f*v5*v5+ shift);
-  feq[6] = rho*w6*(1.f + 3.f*v6 + 4.5f*v6*v6+ shift);
-  feq[7] = rho*w7*(1.f + 3.f*v7 + 4.5f*v7*v7+ shift);
-  feq[8] = rho*w8*(1.f + 3.f*v8 + 4.5f*v8*v8+ shift);
-		   
+  // compute LBM post-collisional
+  const dfloat U2 = Ux*Ux+Uy*Uy;
+  const dfloat shift = 1.f -1.5f*U2*invc*invc;
+  feq[0] = rho*w0*(shift);
+  feq[1] = rho*w1*(v1*(3.f + 4.5f*v1) + shift);
+  feq[2] = rho*w2*(v2*(3.f + 4.5f*v2) + shift);
+  feq[3] = rho*w3*(v3*(3.f + 4.5f*v3) + shift);
+  feq[4] = rho*w4*(v4*(3.f + 4.5f*v4) + shift);
+  feq[5] = rho*w5*(v5*(3.f + 4.5f*v5) + shift);
+  feq[6] = rho*w6*(v6*(3.f + 4.5f*v6) + shift);
+  feq[7] = rho*w7*(v7*(3.f + 4.5f*v7) + shift);
+  feq[8] = rho*w8*(v8*(3.f + 4.5f*v8) + shift);
+  
 }
 
 
@@ -353,15 +357,17 @@ __global__ void lbmUpdateV0(const int N,                  // number of nodes in 
     const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
         
     // post collision densities
-    fnm[0] -= tauinv*(fnm[0]-feq[0]) + (1.f-tauinv)*w0*g0*R*0.25f;
-    fnm[1] -= tauinv*(fnm[1]-feq[1]) + (1.f-tauinv)*w1*g1*R*0.25f;
-    fnm[2] -= tauinv*(fnm[2]-feq[2]) + (1.f-tauinv)*w2*g2*R*0.25f;
-    fnm[3] -= tauinv*(fnm[3]-feq[3]) + (1.f-tauinv)*w3*g3*R*0.25f;
-    fnm[4] -= tauinv*(fnm[4]-feq[4]) + (1.f-tauinv)*w4*g4*R*0.25f;
-    fnm[5] -= tauinv*(fnm[5]-feq[5]) + (1.f-tauinv)*w5*g5*R*0.25f;
-    fnm[6] -= tauinv*(fnm[6]-feq[6]) + (1.f-tauinv)*w6*g6*R*0.25f;
-    fnm[7] -= tauinv*(fnm[7]-feq[7]) + (1.f-tauinv)*w7*g7*R*0.25f;
-    fnm[8] -= tauinv*(fnm[8]-feq[8]) + (1.f-tauinv)*w8*g8*R*0.25f;
+    dfloat fac = (1.f-tauinv)*R*0.25f;
+    
+    fnm[0] -= tauinv*(fnm[0]-feq[0]) + w0*g0*fac;
+    fnm[1] -= tauinv*(fnm[1]-feq[1]) + w1*g1*fac;
+    fnm[2] -= tauinv*(fnm[2]-feq[2]) + w2*g2*fac;
+    fnm[3] -= tauinv*(fnm[3]-feq[3]) + w3*g3*fac;
+    fnm[4] -= tauinv*(fnm[4]-feq[4]) + w4*g4*fac;
+    fnm[5] -= tauinv*(fnm[5]-feq[5]) + w5*g5*fac;
+    fnm[6] -= tauinv*(fnm[6]-feq[6]) + w6*g6*fac;
+    fnm[7] -= tauinv*(fnm[7]-feq[7]) + w7*g7*fac;
+    fnm[8] -= tauinv*(fnm[8]-feq[8]) + w8*g8*fac;
       
     // store new densities
     const int base = idx(N,n,m);
@@ -614,15 +620,16 @@ __global__ void lbmUpdateV2(const int N,                  // number of nodes in 
   
 }
 
-__global__ void lbmUpdateV3(const int N,                  // number of nodes in x
-			    const int M,                  // number of nodes in y
-			    const dfloat c,                // speed of sound
-			    const dfloat * __restrict__ tauInv,           // relaxation rate
-			    const int    * __restrict__ nodeType,      // (N+2) x (M+2) node types 
-			    const dfloat * __restrict__ f,             // (N+2) x (M+2) x 9 fields before streaming and collisions
-			    dfloat * __restrict__ fnew){               // (N+2) x (M+2) x 9 fields after streaming and collisions
-
-  __shared__ dfloat s_f[9][TY][TX];
+__global__ __launch_bounds__(TX*TY)
+  void lbmUpdateV3(const int N,                  // number of nodes in x
+		   const int M,                  // number of nodes in y
+		   const dfloat c,                // speed of sound
+		   const dfloat * __restrict__ tauInv,           // relaxation rate
+		   const int    * __restrict__ nodeType,      // (N+2) x (M+2) node types 
+		   const dfloat * __restrict__ f,             // (N+2) x (M+2) x 9 fields before streaming and collisions
+		   dfloat * __restrict__ fnew){               // (N+2) x (M+2) x 9 fields after streaming and collisions
+  
+  __shared__ dfloat s_f[9][TY][TX+1];
   
   // number of nodes in whole array including halo
   const int Nall = (N+2)*(M+2);
@@ -638,6 +645,7 @@ __global__ void lbmUpdateV3(const int N,                  // number of nodes in 
   if(m>=0 && m<M+2 && n>=0 && n<=N+1){
     const int id = idx(N,n,m);
 
+#pragma unroll
     for(int fld=0;fld<9;++fld){
       s_f[fld][ty][tx] = f[id + fld*Nall];     
     }
@@ -661,7 +669,7 @@ __global__ void lbmUpdateV3(const int N,                  // number of nodes in 
 
   const int test = (m>=1 && m<M+1 && n>=1 && n<=N+1) && (tx>0 && tx<TX-1 && ty>0 && ty<TY-1);
   
-#pragma unroll 4
+#pragma unroll 
   for(int step=0;step<NSUBSTEPS;++step){
     
     __syncthreads(); 
@@ -708,6 +716,7 @@ __global__ void lbmUpdateV3(const int N,                  // number of nodes in 
 
       const dfloat delta2 = 1e-8;
       const dfloat denom = c*rsqrt(rho*rho+delta2);
+      //      const dfloat denom = c/(fabs(rho)+delta2);
 
       // macroscopic momentum
       const dfloat Ux = (fnm[1] - fnm[3] + fnm[5] - fnm[6] - fnm[7] + fnm[8])*denom;
@@ -738,13 +747,15 @@ __global__ void lbmUpdateV3(const int N,                  // number of nodes in 
       fnm[6] -= tauinv*(fnm[6]-feq[6]) + fac*w6*g6;
       fnm[7] -= tauinv*(fnm[7]-feq[7]) + fac*w7*g7;
       fnm[8] -= tauinv*(fnm[8]-feq[8]) + fac*w8*g8;
-	
+      
     }
     
-    __syncthreads();
-    
-    if(test){
-      if(step<NSUBSTEPS-1){
+    if(step<NSUBSTEPS-1){
+      
+      __syncthreads();
+      
+      if(test){
+#pragma unroll
 	for(int fld=0;fld<9;++fld){
 	  s_f[fld][ty][tx] = fnm[fld];
 	}
@@ -771,6 +782,7 @@ __global__ void lbmUpdateV3(const int N,                  // number of nodes in 
 
 
 
+
 void lbmCheck(int N, int M, dfloat *f){
 
   int n,m,s;
@@ -778,6 +790,7 @@ void lbmCheck(int N, int M, dfloat *f){
   for(s=0;s<NSPECIES;++s){
     for(m=0;m<=M+1;++m){
       for(n=0;n<=N+1;++n){
+
 	nanCount += isnan(f[idx(N,n,m)+s*(N+2)*(M+2)]);
       }
     }
@@ -843,7 +856,7 @@ int main(int argc, char **argv){
   dfloat tau = .58; // relaxation rate
   dfloat Reynolds = 2./((tau-.5)*c*c*dt/3.);
 
-  printf("Reynolds number %g\n", Reynolds);
+//  printf("Reynolds number %g\n", Reynolds);
 
   // create lattice storage
   dfloat *h_f    = (dfloat*) calloc((N+2)*(M+2)*NSPECIES, sizeof(dfloat));
@@ -886,9 +899,13 @@ int main(int argc, char **argv){
   cudaEvent_t tic, toc;
   cudaEventCreate(&tic);
   cudaEventCreate(&toc);
-  
+
+  // Use these settings for simulations
   int Nsteps = 480000/2, tstep = 0, iostep = 100;
-//  int Nsteps = 960/2, tstep = 0, iostep = 100;
+
+  // I use these settings for tuning
+  //  int Nsteps = 121, tstep = 0, iostep = Nsteps-1;
+
   int version = 3;
   int nsubs = (version==3) ? NSUBSTEPS:1;
   // time step
@@ -924,7 +941,7 @@ int main(int argc, char **argv){
     }
 
     
-    if(!((nsubs*tstep)%iostep)){ // output an image every iostep
+    if(tstep>0 && !((nsubs*tstep)%iostep)){ // output an image every iostep
       cudaEventRecord(toc);
       
       
@@ -942,7 +959,7 @@ int main(int argc, char **argv){
       elapsed /= 1000.f;
 
       double gnups = N*M*(2*nsubs/elapsed)/1.e9;
-      printf("tstep = %d, GNODES/s = %g\n", tstep*nsubs, gnups);
+      printf("%02d, %02d, %02d, %05d, %5.4f; %%%% TX, TY, NSUBSTEPS, tstep, GNODES/s\n", TX, TY, NSUBSTEPS, tstep*nsubs, gnups);
     }
   }
 

@@ -45,6 +45,17 @@ openmp:$(OOBJS)
 cuda:$(COBJS) 
 	$(NLD)  $(NLDFLAGS) -o cudaLBM $(COBJS) $(LIBS)
 
+cudatune:
+	for TX in `seq 32 1 32`; do\
+		for TY in `seq 8 1 32`; do\
+			maxNSUBS=$$(( $$TX>$$TY ? $$TY : $$TX ));\
+			maxNSUBS=$$(( ($$maxNSUBS-1)/2 ));\
+			for NSUBS in `seq 1 $$maxNSUBS`; do\
+				nvcc $(NCFLAGS) -DNHALO=$$NSUBS -DNSUBSTEPS=$$NSUBS -DTX=$$TX -DTY=$$TY -o cudaLBM cudaLBM.cu png_util.c $(LIBS);\
+				./cudaLBM images/fsm.png 180;\
+			done;\
+		done;\
+	done;
 
 # what to do if user types "make clean"
 clean :
