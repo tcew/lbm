@@ -1,48 +1,30 @@
+
+PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
 ifndef OCCA_DIR
-ERROR:
-	@echo "Error, environment variable [OCCA_DIR] is not set"
+  include $(PROJ_DIR)/occa/scripts/build/Makefile
+else
+  include ${OCCA_DIR}/scripts/build/Makefile
 endif
 
-CXXFLAGS = 
+#---[ COMPILATION ]-------------------------------
+headers = $(wildcard $(incPath)/*.hpp) $(wildcard $(incPath)/*.tpp)
+sources = $(wildcard $(srcPath)/*.cpp)
 
-include ${OCCA_DIR}/scripts/makefile
+objects  = png_util.o
 
-# define variables
-HDRDIR  = ./ 
+executables: ${PROJ_DIR}/occaLBM
 
-# set options for this machine
-# specify which compilers to use for c, fortran and linking
-cc	= gcc
-CC	= g++
-LD	= g++
+${PROJ_DIR}/occaLBM: $(objects) $(headers) ${PROJ_DIR}/occaLBM.cpp
+	$(compiler) $(compilerFlags) -o ${PROJ_DIR}/occaLBM $(flags) $(objects) ${PROJ_DIR}/occaLBM.cpp $(paths) $(linkerFlags) -lpng
+	@if which install_name_tool > /dev/null 2>&1; then \
+		install_name_tool -add_rpath "${OCCA_DIR}/lib" ${PROJ_DIR}/main; \
+	fi
 
-# compiler flags to be used (set to compile with debugging on)
-CFLAGS = -O3 -I$(HDRDIR) -I/opt/local/include/
+$(objPath)/%.o:$(srcPath)/%.cpp $(wildcard $(subst $(srcPath)/,$(incPath)/,$(<:.cpp=.hpp))) $(wildcard $(subst $(srcPath)/,$(incPath)/,$(<:.cpp=.tpp)))
+	$(compiler) $(compilerFlags) -o $@ $(flags) -c $(paths) $<
 
-# link flags to be used 
-LDFLAGS	= $(compilerFlags) $(flags) -O3 
-
-# libraries to be linked in
-LIBS	=  $(links) -llapack -lblas -L/opt/local/lib/ -lpng
-
-# types of files we are going to construct rules for
-.SUFFIXES: .c 
-
-# rule for .c files
-.c.o:
-	$(cc) $(CFLAGS) -o $*.o -c $*.c $(paths)
-.cpp.o:
-	$(CC) $(CFLAGS) -o $*.o -c $*.cpp $(paths)
-
-# list of objects to be compiled
-OBJS    = \
-png_util.o 
-
-occaLBM:$(AOBJS) $(OBJS) occaLBM.o
-	$(LD)  $(LDFLAGS)  -o occaLBM occaLBM.o $(OBJS)  $(paths) $(LIBS)
-
-# what to do if user types "make clean"
-clean :
-	rm -r $(OBJS)  occaLBM.o
-
-
+clean:
+	rm -f $(objPath)/*;
+	rm -f ${PROJ_DIR}/main;
+#=================================================

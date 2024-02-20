@@ -3,21 +3,27 @@ int idx(int N, int n, int m){
   return (n + (m*(N+2)));
 }
 
+#if 1
+// MRT stabilization
+const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
+const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
+#endif
+
 // perform lattice streaming and collision steps
-kernel void lbmUpdate(const int N,                  // number of nodes in x
-		      const int M,                  // number of nodes in y
-		      const dfloat c,                // speed of sound
-		      const dfloat * restrict tau,           // relaxation rate
-		      const int    * restrict nodeType,      // (N+2) x (M+2) node types 
-		      const dfloat * restrict f,             // (N+2) x (M+2) x 9 fields before streaming and collisions
-		      dfloat * restrict fnew){               // (N+2) x (M+2) x 9 fields after streaming and collisions
+@kernel void lbmUpdate(const int N,                  // number of nodes in x
+		       const int M,                  // number of nodes in y
+		       const dfloat c,                // speed of sound
+		       @restrict const dfloat * tau,      // relaxation rate
+		       @restrict const int    * nodeType, // (N+2) x (M+2) node types 
+		       @restrict const dfloat * f,        // (N+2) x (M+2) x 9 fields before streaming and collisions
+		       @restrict dfloat * fnew){          // (N+2) x (M+2) x 9 fields after streaming and collisions
   
   // loop over all non-halo nodes in lattice
-  for(int mb=0;mb<(M+2+TY-1)/TY;++mb;outer1){
-    for(int nb=0;nb<(N+2+TX-1)/TX;++nb;outer0){
+  for(int mb=0;mb<(M+2+TY-1)/TY;++mb;@outer(1)){
+    for(int nb=0;nb<(N+2+TX-1)/TX;++nb;@outer(0)){
 
-      for(int mt=0;mt<TY;++mt;inner1){
-	for(int nt=0;nt<TX;++nt;inner0){
+      for(int mt=0;mt<TY;++mt;@inner(1)){
+	for(int nt=0;nt<TX;++nt;@inner(0)){
 	  
 	  // number of nodes in whole array including halo
 	  const int Nall = (N+2)*(M+2);
@@ -101,8 +107,11 @@ kernel void lbmUpdate(const int N,                  // number of nodes in x
 	    feq[7] = rho*w7*(1.f + 3.f*v7 + 4.5f*v7*v7 -1.5f*U2/(c*c)); 
 	    feq[8] = rho*w8*(1.f + 3.f*v8 + 4.5f*v8*v8 -1.5f*U2/(c*c)); 
 	    
-	    const dfloat R = g0*fnm[0] + g1*fnm[1] + g2*fnm[2]+ g3*fnm[3] + g4*fnm[4] + g5*fnm[5] + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
-        
+	    dfloat R =
+	        g0*fnm[0] + g1*fnm[1] + g2*fnm[2]
+	      + g3*fnm[3] + g4*fnm[4] + g5*fnm[5]
+	      + g6*fnm[6] + g7*fnm[7] + g8*fnm[8];
+	      
 	    // post collision densities
 	    fnm[0] = fnm[0] -tauinv*(fnm[0]-feq[0]) - (1.f-tauinv)*w0*g0*R*0.25f;
 	    fnm[1] = fnm[1] -tauinv*(fnm[1]-feq[1]) - (1.f-tauinv)*w1*g1*R*0.25f;

@@ -187,8 +187,6 @@ const dfloat g0 = 1.f, g1 = -2.f, g2 = -2.f, g3 = -2.f, g4 = -2.f;
 const dfloat g5 = 4.f, g6 = 4.f, g7 = 4.f, g8 = 4.f;
 
 
-
-
 void lbmEquilibrium(const dfloat c,
 		    const dfloat rho,
 		    const dfloat Ux, 
@@ -390,9 +388,11 @@ int main(int argc, char **argv){
   }
 
   occa::device device;
-  //  device.setup("mode=OpenCL, deviceID=1, platformID=0");
-  device.setup("mode=CUDA, deviceID=0");
-  //  device.setup("mode=OpenMP");
+
+  device.setup({
+      {"mode", "CUDA"},
+      {"device_id", 0},
+    });
   
   // read threshold 
   dfloat threshold = atof(argv[2]);
@@ -439,36 +439,43 @@ int main(int argc, char **argv){
   occa::memory o_tau      = device.malloc((N+2)*(M+2)*sizeof(dfloat),           h_tau);
 
   // OCCA DEVICE kernel
-  occa::kernelInfo info;
+  occa::json info;
 
-  info.addDefine("TX", 16);
-  info.addDefine("TY", 16);
-  info.addDefine("FLUID", FLUID);
-  info.addDefine("WALL", WALL);
-  info.addDefine("NSPECIES", NSPECIES);
+  info["defines/TX"] = 16;
+  info["defines/TY"] = 16;
+  info["defines/FLUID"] = FLUID;
+  info["defines/WALL"] = WALL;
+  info["defines/NSPECIES"] = NSPECIES;
+  info["defines/dfloat"] = dfloatString;
   
-  info.addDefine("w0", w0); 
-  info.addDefine("w1", w1); 
-  info.addDefine("w2", w2); 
-  info.addDefine("w3", w3); 
-  info.addDefine("w4", w4);
-  info.addDefine("w5", w5);
-  info.addDefine("w6", w6);
-  info.addDefine("w7", w7);
-  info.addDefine("w8", w8);
 
-  info.addDefine("g0", g0);
-  info.addDefine("g1", g1);
-  info.addDefine("g2", g2);
-  info.addDefine("g3", g3);  
-  info.addDefine("g4", g4);
-  info.addDefine("g5", g5);  
-  info.addDefine("g6", g6);
-  info.addDefine("g7", g7);
-  info.addDefine("g8", g8);
-  info.addDefine("dfloat", dfloatString);
+  info["defines/w0"] = w0; 
+  info["defines/w1"] = w1; 
+  info["defines/w2"] = w2; 
+  info["defines/w3"] = w3; 
+  info["defines/w4"] = w4;
+  info["defines/w5"] = w5;
+  info["defines/w6"] = w6;
+  info["defines/w7"] = w7;
+  info["defines/w8"] = w8;
 
-  occa::kernel lbmUpdateKernel = device.buildKernelFromSource("occaLBM.okl", "lbmUpdate", info);
+#if 0
+  info["defines/g0"] = (dfloat)g0;
+  info["defines/g1"] = (dfloat)g1;
+  info["defines/g2"] = (dfloat)g2;
+  info["defines/g3"] = (dfloat)g3;  
+  info["defines/g4"] = (dfloat)g4;
+  info["defines/g5"] = (dfloat)g5;  
+  info["defines/g6"] = (dfloat)g6;
+  info["defines/g7"] = (dfloat)g7;
+  info["defines/g8"] = (dfloat)g8;
+  
+#endif
+
+
+  std::cout << info << std::endl;
+  
+  occa::kernel lbmUpdateKernel = device.buildKernel("occaLBM.okl", "lbmUpdate", info);
   
   int Nsteps = 480000/2, tstep = 0, iostep = 100;
 
